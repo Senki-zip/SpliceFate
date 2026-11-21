@@ -21,7 +21,7 @@ def launch_settings(path):
     threads=runtime.get('threads',4)
     if isinstance(threads,bool) or not isinstance(threads,int) or threads<1:
         raise ValueError('runtime.threads must be a positive integer')
-    binary=runtime.get('python_binary',sys.executable)
+    binary=os.environ.get('SPLICEFATE_PYTHON',runtime.get('python_binary',sys.executable))
     if '/' in binary:binary=str((root/Path(binary).expanduser()).resolve())
     executable=shutil.which(binary)
     if not executable:raise ValueError('Python interpreter not found: '+binary)

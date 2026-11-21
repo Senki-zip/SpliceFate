@@ -1,13 +1,12 @@
 """Download sequence-resolved mouse RBP annotations, retaining full evidence.
 
-UniProt requests use the life-science-research UniProt skill client. InterPro
+UniProt requests use the resource_http REST client. InterPro
 member-signature and integrated matches remain distinct; source absences and
 network failures are recorded separately. Restart to reuse verified payloads.
 """
 from __future__ import annotations
 import concurrent.futures as cf
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 import threading
@@ -15,11 +14,11 @@ import time
 
 import duckdb
 import requests
+import resource_http
 
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT / 'data/external/rbp_protein_dimensions_20261120'
 DB = PROJECT / 'data/external/mouse_rbp_unified_20261116/mouse_rbp.duckdb'
-SKILL = Path('/home/huangtao/.codex/plugins/cache/openai-curated-remote/life-science-research/1.0.3/skills/uniprot-skill/scripts/rest_request.py')
 LOCK = threading.RLock()
 RECORDS = {}
 STATE = {}
@@ -79,7 +78,7 @@ def uniprot(payload, path, client):
                 if any(r.get('organism', {}).get('taxonId') != 10090 for r in data['results']):
                     raise ValueError('Non-mouse UniProt record')
             temporary.replace(destination)
-            record(path, 'UniProtKB', payload, status='verified', skill=str(SKILL))
+            record(path, 'UniProtKB', payload, status='verified', client='resource_http')
             return
         last = result.get('error'); time.sleep(2**attempt)
     record(path, 'UniProtKB', payload, status='failed', error=last)
@@ -143,8 +142,7 @@ def main():
             'sources': ['UniProtKB full JSON and alternative-isoform FASTA', 'InterPro integrated and member-signature positions'],
             'coordinate_policy': 'protein source 1-based inclusive; normalized start0/end0 half-open; fuzzy positions retained'}
     (ROOT/'download_plan.json').write_text(json.dumps(plan, indent=2))
-    spec = importlib.util.spec_from_file_location('uniprot_skill_client', SKILL)
-    client = importlib.util.module_from_spec(spec); spec.loader.exec_module(client)
+    client = resource_http
     jobs = []
     for n, start in enumerate(range(0, len(ids), 80)):
         query = 'organism_id:10090 AND ('+' OR '.join('accession:'+u for u in ids[start:start+80])+')'

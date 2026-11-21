@@ -2,7 +2,7 @@
 
 Original motif associations remain unchanged. InterPro Family annotations, not
 generic RRM/KH domains or gene-name prefixes, define sharing groups. This is a
-candidate-generating rule, not a sequence-specificity validation.
+candidate-generating rule with explicit source labels.
 """
 from __future__ import annotations
 import collections

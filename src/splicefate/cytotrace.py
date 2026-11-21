@@ -36,7 +36,7 @@ def compute_scores(counts,cells,genes,cfg,output=None):
     root=Path(cfg['source_dir']);source=root/'R/CytoTRACE.R'
     if digest(source)!=OFFICIAL_SOURCE_SHA256 or 'Version: 0.3.1' not in (root/'DESCRIPTION').read_text():
         raise ValueError('Expected unmodified official CytoTRACE 0.3.1 source')
-    executable=shutil.which(str(cfg.get('rscript_binary','Rscript')))
+    executable=shutil.which(os.environ.get('SPLICEFATE_RSCRIPT',str(cfg.get('rscript_binary','Rscript'))))
     if executable is None:raise RuntimeError('CytoTRACE requires a working trajectory.cytotrace.rscript_binary')
     prefix=Path(executable).absolute().parent.parent
     runner=Path(__file__).with_name('cytotrace_runner.R')

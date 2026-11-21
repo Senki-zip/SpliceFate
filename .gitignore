@@ -1,6 +1,7 @@
 # Scientific data and generated artifacts
 /data/
 /runs/
+/backups/
 /test/
 /tests/
 /md5sum.txt

@@ -1,6 +1,5 @@
 {
   "copied_at": "2026-11-20T17:50:26+0800",
-  "source_directory": "/home/huangtao/Desktop/huangchengqi/CausalBridge/CytoTRACE_official",
   "source_git_commit": "f4ff6c0ab93cc704eef44e17adcd5c6baf09703a",
   "package_version": "0.3.1",
   "files": [
@@ -144,5 +143,6 @@
       "sha256": "1a4a5e5f597eb3ea95246d4eba1b76062944087ab44ff291c801dfe2549c6858",
       "bytes": 3612
     }
-  ]
+  ],
+  "source_repository": "https://github.com/gunsagargulati/CytoTRACE"
 }

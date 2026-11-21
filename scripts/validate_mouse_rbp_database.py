@@ -169,7 +169,7 @@ def main():
     site=stats['site_scan'];factor=stats['factor_catalog']
     lines=['# 小鼠 RBP 统一数据库验收记录','',
         f"验收时间：{report['finished_at']}；通过：{report['passed']}。",'',
-        f"统一入口：`{ROOT / 'mouse_rbp.duckdb'}`；位点分区：同目录 `sites/`。",'',
+        "统一入口：`mouse_rbp.duckdb`；位点分区：同目录 `sites/`。",'',
         '| 项目 | 数量 |','|---|---:|',
         f"| 因子/蛋白目录行（含背景） | {factor['catalog_entries']:,} |",
         f"| 来源支持的 RBP 目录行 | {factor['source_supported_rbp_entries']:,} |",
@@ -182,20 +182,20 @@ def main():
         f"| 原始 mm10 CLIP 区间 | {report['tables']['clip_peaks_original']:,} |",
         f"| 严格转换后的 mm39 CLIP 区间 | {report['tables']['clip_peaks_mm39']:,} |",
         f"| 来源级基因结合注释 | {report['tables']['gene_binding']:,} |",'',
-        '这些计数保留转录本和来源上下文，不能当作独立结合位点、独立实验、已确认调控边或可预测 KO 的因子数量。', '',
+        '计数单位为保留转录本和来源上下文的记录；位点、实验及因子分别统计。', '',
         '| motif 来源 | 因子数 | 关联行 | 精确数值矩阵组 |','|---|---:|---:|---:|']
     for r in stats['motif_links']:
         lines.append(f"| {r['source']} | {r['factors']:,} | {r['rows']:,} | {r['exact_matrices']:,} |")
-    lines+=['','ENCORI 为 HOMER 初始候选；oRNAment 来源中含同源推断。矩阵相同及来源重叠不构成独立验证。','',
+    lines+=['','ENCORI 为 HOMER 初始候选；oRNAment 来源中含同源推断。相同矩阵及来源重叠保留来源标签。','',
         '## 坐标与验证','',
         '规范化坐标为 0-based half-open，oRNAment 原始 1-based inclusive 字符串保留。跨外显子位点逐区块处理，mm10 CLIP 原始记录完整保留。','',
         'CLIP 转换：`'+json.dumps(stats['liftover'],ensure_ascii=False)+'`。','',
         '序列评分抽样：`'+json.dumps({k:v for k,v in stats['sequence_score_validation'].items() if k!='mismatches'},ensure_ascii=False)+'`。','',
         f"数据目录文件校验见 `SHA256SUMS`，完整验证结果见 `validation.json`。数据库约 {stats['duckdb_bytes']/1024**3:.2f} GiB，位点 Parquet 约 {stats['parquet_bytes']/1024**3:.2f} GiB。",'',
         '## 限制','',
-        'POSTAR3 全量坐标和 oRNAment 官方 CLIP/浏览器压缩包未取得。本库保留已下载 ENCORI CLIP 与 oRNAment 的支持字段，未虚构缺失的文件或实验。', '',
-        '本地参考为过滤版 GENCODE，oRNAment 为 Ensembl115。数据库补充保存后者的 feature/基因身份；参考缺少某个注释不等于该 RNA 不存在。', '',
-        '当前整合不训练模型，不推断正负调控，也不改变项目训练参数。']
+        '位点层使用已下载的 ENCORI CLIP 与 oRNAment 支持字段。POSTAR3 全量坐标和 oRNAment 官方 CLIP/浏览器压缩包的下载状态为未取得。', '',
+        '本地参考为过滤版 GENCODE，oRNAment 为 Ensembl115。数据库补充保存后者的 feature/基因身份；两套注释按来源分别记录。', '',
+        '本流程输出统一数据库与来源、坐标及序列验收结果。']
     (ROOT/'SUMMARY.md').write_text('\n'.join(lines)+'\n')
     print(json.dumps({'passed':report['passed'],'statistics':stats},ensure_ascii=False,indent=2),flush=True)
     if not report['passed']:raise SystemExit(1)

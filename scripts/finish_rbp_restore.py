@@ -306,10 +306,8 @@ def ornament_pipeline():
 
 
 def backup():
-    mount = Path('/media/huangtao/ae2c2db0-d1db-4f02-9cc6-79d9bd823577')
-    if not os.path.ismount(mount):
-        raise RuntimeError('10 TB backup drive is not mounted')
-    dest = mount / 'home/hcq/SpliceFate_backups/mouse_rbp_rebuilt_20261119'
+    backup_root = Path(os.environ.get('SPLICEFATE_BACKUP_DIR', PROJECT / 'backups')).expanduser().resolve()
+    dest = backup_root / 'mouse_rbp_rebuilt_20261119'
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         raise FileExistsError('Preserving existing backup: ' + str(dest))

@@ -1,6 +1,6 @@
 """Build a source-traceable RBP atlas without mixing perturbation readouts into priors.
 
-Run after collect_rbp_resources.py finishes. No statistical causal edges are inferred.
+Run after collect_rbp_resources.py finishes. Source evidence types remain attached to each record.
 """
 from __future__ import annotations
 

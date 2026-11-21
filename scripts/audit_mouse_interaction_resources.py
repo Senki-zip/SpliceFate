@@ -218,7 +218,7 @@ def main():
     report['checks']=checks;report['passed']=all(checks.values());report['status']='complete' if report['passed'] else 'validation_failed'
     report['updated_at']=time.strftime('%Y-%m-%dT%H:%M:%S%z')
     report['limitations']=['STRING physical includes co-complex evidence, not necessarily direct contact.',
-       'Nontransferred score channels are provider annotations, not a new experiment validation.',
+       'Nontransferred score channels retain provider annotations.',
        'No RNA-dependence, sign, target-event identity or WT certification inferred from PPI.',
        'Human curated stages have not been assigned to mouse; explicit orthology mapping remains to be reviewed.',
        'Same experiment/PMID may be reused by IntAct, CORUM, Complex Portal and STRING; counts are not independent replication.']

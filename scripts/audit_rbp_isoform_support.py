@@ -149,7 +149,7 @@ def main():
              'thresholds':{'supported_chain_or_event_branch':'total molecules>=20 and cells>=10',
                            'strong_chain':'total molecules>=50 and cells>=20','composition_cell':'gene or event denominator>=3 molecules',
                            'variable_context':'fixed Leiden x sample; >=30 informative cells; >=10 cells with minor fraction>=0.2; >=10 with fraction<=0.8; fraction SD>=0.1',
-                           'note':'Audit sensitivity thresholds, not fitted selection or proof of regulatory weight identifiability'},
+                           'note':'Audit sensitivity thresholds for observed expression and composition support'},
              'splicing_factors':stats(gene[gene.splicing_candidate]),'all_RBPs':stats(gene[gene.source_supported_RBP]),
              'current_factor_universe':stats(gene[gene.current_factor_universe]),
              'current_seed_examples':gene[gene.symbol.isin(['Ptbp1','Rbfox2','Ddx5','Hnrnpm'])].to_dict('records'),

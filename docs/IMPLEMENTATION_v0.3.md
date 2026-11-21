@@ -27,7 +27,7 @@
 | prepare / fit / simulate / run / evaluate 命令，bootstrap 与逐事件审计 | `src/splicefate/cli.py` |
 | 有真实 precursor/mature 输入时的 scVelo API 适配 | `src/splicefate/velocity.py` |
 
-算法输入不要求固定细胞数或固定十个阶段；示例数据适配仍是小鼠原生 mm10。没有以当前样本量取消功能模块，也没有因为当前动力学输入不完整而把成熟分支计数改名为 unspliced。
+算法输入不要求固定细胞数或固定十个阶段；示例数据适配仍是小鼠原生 mm10。模块按输入类型启用，相位校准读取独立 E/I 计数。
 
 ## 验证
 
@@ -47,7 +47,7 @@
 - 独立合成 prepare→fit→simulate 全流程。
 - 外部评价必须匹配靶点、剂量、事件、状态、分支，不能混算。
 
-以下为最初版本的历史验证记录（当时含基因块排除，现已移除）：`runs/implementation_validation/pytest.log`、`implementation_report.json`。scVelo 0.3.4 适配器另用独立 100 细胞、30 基因 U/S 数据跑通 recover_dynamics、velocity_graph、latent_time，按两个基因块排除并记录 16/14 个支持基因；见 `scvelo_adapter_check.json`。这是 API 和数值路径验证，不是长读长真实扰动效果验证。
+以下为最初版本的历史验证记录（当时含基因块排除，现已移除）：`runs/implementation_validation/pytest.log`、`implementation_report.json`。scVelo 0.3.4 适配器另用独立 100 细胞、30 基因 U/S 数据跑通 recover_dynamics、velocity_graph、latent_time，按两个基因块排除并记录 16/14 个支持基因；见 `scvelo_adapter_check.json`。检查覆盖 API 和数值计算路径。
 
 在用户要求“先不管当前数据集”之前，曾对现有输入完成一次 6 事件实现检查；该历史目录位于 `runs/splicefate_v0.3_implementation_check`。此后代码继续修订，没有继续用该数据集训练或按其结果选参；旧运行绑定当时源码，不能当作当前版本完整训练或复用缓存。
 
@@ -58,5 +58,3 @@
 - 直接 RBP 和伙伴模块通过其自身／伙伴 RNA 锚点生成事件候选。多轮传播由已拟合的 RBP 自身事件响应和下游组成系数连接，不要求人工蛋白功能注释。
 - 可选 bootstrap 对完整 WT 事件模型集合重拟合并运行多轮组成传播，默认未开启时不输出区间。
 - 没有实现 Δgene RNA 或命运概率；它们仍是 L1/L2 通过独立扰动验证后的后续模块。
-
-以上边界在运行输出中保留，不通过文件名、训练收敛或聚类分离替代生物学验证。

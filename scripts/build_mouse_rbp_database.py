@@ -555,7 +555,7 @@ def final_stage(db):
       ('ATtRACT','download_'+snapshots.get('ATtRACT','unknown'),'motif/measurement','partly reuses CISBP/RBPDB; not independent validation'),
       ('RBP2GO','2.0','protein/function/domain/complex/homology','background proteins are not confirmed RBPs; peptides are protein coordinates'),
       ('ENCORI','download_'+snapshots.get('ENCORI','unknown'),'CLIP peaks/gene aggregates/HOMER candidates','candidate motifs are before final optimization; signed KD columns excluded'),
-      ('POSTAR3','download_'+snapshots.get('POSTAR3','unknown'),'factor catalog/gene binding annotations','full coordinate export unavailable; no fabricated site coordinates'),
+      ('POSTAR3','download_'+snapshots.get('POSTAR3','unknown'),'factor catalog/gene binding annotations','full coordinate export unavailable'),
       ('oRNAmentV2','Ensembl115_2026-11-11','predicted sites/motif relationships/RNA structure','1-based source positions normalized; mouse mm39; CLIP support not signed regulation'),
     ]
     create_rows(db,'sources','source VARCHAR,version VARCHAR,evidence_types VARCHAR,limitations VARCHAR',sources)

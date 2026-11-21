@@ -49,12 +49,11 @@ def export_coverage():
 
 
 def backup(label):
-    mount=Path('/media/huangtao/ae2c2db0-d1db-4f02-9cc6-79d9bd823577')
     import os
-    if not os.path.ismount(mount):raise ValueError('10 TB backup disk not mounted')
+    backup_root=Path(os.environ.get('SPLICEFATE_BACKUP_DIR',PROJECT/'backups')).expanduser().resolve()
     # The validated baseline snapshot already contains the immutable sites store.
     # Save a new DB plus its annotations and link their checksums to that snapshot.
-    dest=mount/'home/hcq/SpliceFate_backups'/('protein_dimensions_20261120_'+label)
+    dest=backup_root/('protein_dimensions_20261120_'+label)
     dest.mkdir(parents=True,exist_ok=True)
     target=dest/'mouse_rbp.duckdb'
     tmp=target.with_suffix('.duckdb.copying');shutil.copy2(DBPATH,tmp)
@@ -65,7 +64,7 @@ def backup(label):
               ROOT/'integration_status.json',ROOT/'validation.json',ROOT/'factor_protein_coverage.tsv']:
         if p.exists():shutil.copy2(p,dest/p.name)
     (dest/'backup.json').write_text(json.dumps({'verified_at':stamp(),'database_sha256':expected,
-        'sites_snapshot':str(mount/'home/hcq/SpliceFate_backups/mouse_rbp_rebuilt_20261119/sites'),
+        'sites_snapshot':str(backup_root/'mouse_rbp_rebuilt_20261119/sites'),
         'restore_note':'Copy this DuckDB beside the unchanged sites/ directory from the validated 20261119 snapshot; set file_search_path to that restored root.'},indent=2))
     return str(dest)
 

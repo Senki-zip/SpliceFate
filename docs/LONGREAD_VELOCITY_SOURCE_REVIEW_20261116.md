@@ -30,7 +30,7 @@
 
 ## IsoVelo 的核查边界
 
-[ASHG 2025 会议摘要](https://www.ashg.org/wp-content/uploads/2025/10/2025-Poster-Abstracts.pdf)包含 *Deep Generative Modeling of Isoform Aware RNA Velocity in Long-read Single-cell RNA-seq*，介绍 IsoVelo。检索线索曾指向 `shizhuom/IsoVelo`，本轮 GitHub 返回 404，clone 无法匿名获取。因而尚未审查它的可运行实现，不作为已经可接入的依赖；该访问结果也不能证明工具不存在或永久不可用。
+[ASHG 2025 会议摘要](https://www.ashg.org/wp-content/uploads/2025/10/2025-Poster-Abstracts.pdf)包含 *Deep Generative Modeling of Isoform Aware RNA Velocity in Long-read Single-cell RNA-seq*，介绍 IsoVelo。检索线索曾指向 `shizhuom/IsoVelo`，本轮 GitHub 返回 404，clone 无法匿名获取。可运行实现的审查状态为待获取源码。
 
 ## 实现决策
 
@@ -39,8 +39,8 @@
 1. **成熟剪接组成校准**：直接使用事件分支分子计数与有效分母，辅助 G 状态排序；不是 RNA velocity。
 2. **动力学定向校准**：只有真正的 precursor/mature 输入及量化来源通过检查时，调用 `splicefate.velocity`，导出所有事件共享的 `latent_time`，再作为可选输入。失败保持空值和 QC 标记。
 
-Region Velocity 提供后续 long-read 区域动力学的实现依据，但需独立 region quantification adapter，不把已有 AS/IR 矩阵冒充区域统计。当前不把当前数据条件强加给通用模型，也不宣称 scVelo 或 Region Velocity 能自动推断每个内含子的真实切除顺序。
+Region Velocity 提供后续 long-read 区域动力学的实现依据；区域计数由独立 region quantification adapter 生成，再进入动力学推断。
 
 ## 验证范围
 
-历史版本（当时含基因块排除，当前已移除）的适配器对独立生成的 100 细胞、30 基因 U/S 动力学 Poisson 数据进行了 API 检查，两组基因排除各有 16/14 个动力学支持基因，均完成 velocity graph 和 latent_time。结果用于确认代码路径可执行，不是长读长生物学准确率验证。原始合成输入、日志和输出位于 `/tmp/splicefate_velocity_synthetic`，持久摘要记录在 `runs/implementation_validation/scvelo_adapter_check.json`。
+历史版本（当时含基因块排除，当前已移除）的适配器对独立生成的 100 细胞、30 基因 U/S 动力学 Poisson 数据进行了 API 检查，两组基因排除各有 16/14 个动力学支持基因，均完成 velocity graph 和 latent_time。检查覆盖 API 和数值计算路径，摘要记录在 `runs/implementation_validation/scvelo_adapter_check.json`。

@@ -177,7 +177,7 @@ def simulate_run(c,targets,q,bootstrap=0):
         events['bootstrap_low']=lo;events['bootstrap_high']=hi;events['bootstrap_successful_fits']=success
         meta['uncertainty']='WT cell bootstrap within stage x batch; complete learned composition cascade re-fitted'
     else:
-        meta['uncertainty']='not_estimated; no fabricated confidence intervals'
+        meta['uncertainty']='not_estimated'
     label='+'.join(targets).replace('/','_')+f'_q{q:g}';out=p/'simulations'/label;out.mkdir(parents=True,exist_ok=True)
     events.to_csv(out/'events.tsv.gz',sep='\t',index=False,compression='gzip')
     chains.to_csv(out/'chains.tsv.gz',sep='\t',index=False,compression='gzip')

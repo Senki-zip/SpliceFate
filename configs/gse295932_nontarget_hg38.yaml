@@ -12,7 +12,7 @@ input:
 assembly: hg38
 output: runs/GSE295932_Nontarget_cluster_RBFOX2_20261121
 runtime:
-  python_binary: /home/huangtao/miniconda3/envs/SpliceFate/bin/python
+  python_binary: python
   threads: 24
 execution:
   stages:
@@ -53,7 +53,7 @@ trajectory:
   root_method: cytotrace
   cytotrace:
     source_dir: tools/CytoTRACE_official
-    rscript_binary: /home/huangtao/miniconda3/envs/CausalBridge/bin/Rscript
+    rscript_binary: Rscript
     seed: 42
     enable_fast: true
     ncores: 1
