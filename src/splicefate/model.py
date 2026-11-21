@@ -1,5 +1,6 @@
 """Joint conditional DM count responses with frozen spline and interaction bases."""
 from __future__ import annotations
+import json
 import numpy as np
 import pandas as pd
 from scipy.interpolate import BSpline
@@ -220,28 +221,46 @@ def predict_change(model,Xold,Xnew,frame,t):
     return new,new-old,[sorted(set(f)) for f in flags]
 
 
-def fit_models(data,frame,times,prior,X,c,event_limit=None):
+def fit_models(data,frame,times,prior,X,c,event_limit=None,network_path=None):
+    from .network import learn_network,network_summary
     models={};audit=[];findex={f:j for j,f in enumerate(prior['factor_ids'])}
-    pairs={tuple(sorted(p['members'])) for p in prior['pairs']};seeds=set(prior['seed_factor_ids'])
-    event_ids=sorted(map(int,prior['events']))
-    if event_limit is not None:event_ids=event_ids[:event_limit]
-    for e in event_ids:
-        event=data['events'][e];candidates=prior['events'][str(e)]
-        candidates=sorted(candidates,key=lambda r:(-(r['factor_id'] in seeds),-r['priority'],r['factor_id']))[:c['model']['max_factors']]
-        indices=[findex[r['factor_id']] for r in candidates]
-        accepted={r['factor_id'] for r in candidates}
-        ipairs=[(findex[a],findex[b]) for a,b in sorted(pairs) if a in accepted and b in accepted][:c['model']['max_interactions']]
-        C=data['C'][:,data['offsets'][e]:data['offsets'][e+1]].toarray()
-        t=times
-        composition=[f for f in prior.get('composition_features',[]) if f['factor_index'] in indices
-                     and f['gene_id']!=event['gene']]
-        model=fit_event(C,X,frame,t,indices,ipairs,c,composition) if composition else fit_event(C,X,frame,t,indices,ipairs,c)
-        model.update(event_index=e,event_id=event['event'],gene_id=event['gene'],gene_name=event['gene_name'],
-            branch_count=C.shape[1],candidates=candidates)
-        models[str(e)]=model
-        audit.append({'event':event['event'],'gene':event['gene'],'status':model['status'],
-            'factors':len(indices),'interactions':len(ipairs),
-            'isoform_inputs':len(model.get('design',{}).get('compositions',[])),
-            'counted_cells':int((C.sum(1)>0).sum()),
-            'molecules':float(C.sum()),'message':model.get('message','')})
+    pairs={tuple(sorted(p['members'])) for p in prior['pairs']}
+    network=learn_network(data,frame,times,prior,X,c,fit_event,logits,network_path,event_limit)
+    try:
+        summary=network_summary(network)
+        event_ids=[r[0] for r in network.execute('SELECT DISTINCT event_index FROM single_relations ORDER BY event_index').fetchall()]
+        for e in event_ids:
+            event=data['events'][e]
+            rows=network.execute('''SELECT candidate_json,response_score,selection_rank,WT_weight
+                FROM single_relations WHERE event_index=? AND selected ORDER BY selection_rank''',[e]).fetchall()
+            candidates=[{**json.loads(raw),'WT_response_score':score,'selection_rank':rank,'WT_network_weight':weight}
+                        for raw,score,rank,weight in rows]
+            indices=[findex[r['factor_id']] for r in candidates]
+            scores={r['factor_id']:r['WT_response_score'] for r in candidates}
+            accepted=set(scores)
+            ranked_pairs=sorted((p for p in pairs if set(p)<=accepted),
+                                key=lambda p:(-min(scores[f] for f in p),-sum(scores[f] for f in p),p))
+            ipairs=[(findex[a],findex[b]) for a,b in ranked_pairs[:c['model']['max_interactions']]]
+            C=data['C'][:,data['offsets'][e]:data['offsets'][e+1]].toarray()
+            composition=[f for f in prior.get('composition_features',[]) if f['factor_index'] in indices
+                         and f['gene_id']!=event['gene']]
+            model=(fit_event(C,X,frame,times,indices,ipairs,c,composition) if composition
+                   else fit_event(C,X,frame,times,indices,ipairs,c)) if indices else {'status':'no_supported_factor_response'}
+            model.update(event_index=e,event_id=event['event'],gene_id=event['gene'],gene_name=event['gene_name'],
+                         branch_count=C.shape[1],candidates=candidates,
+                         network_candidate_count=len(prior['events'][str(e)]),
+                         selection_policy=summary['selection_policy'])
+            models[str(e)]=model
+            audit.append({'event':event['event'],'gene':event['gene'],'status':model['status'],
+                'network_candidates':len(prior['events'][str(e)]),'factors':len(indices),'interactions':len(ipairs),
+                'isoform_inputs':len(model.get('design',{}).get('compositions',[])),
+                'counted_cells':int((C.sum(1)>0).sum()),
+                'molecules':float(C.sum()),'message':model.get('message','')})
+        if network_path is not None:
+            from .io import dump
+            from pathlib import Path
+            dump(Path(network_path).with_suffix('.summary.json'),summary)
+            network.execute('CHECKPOINT')
+    finally:
+        network.close()
     return models,pd.DataFrame(audit)

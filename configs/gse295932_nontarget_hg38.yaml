@@ -85,7 +85,10 @@ model:
   ridge: 10.0
   interaction_ridge: 30.0
   dm_concentration: 20.0
-  max_factors: 6
+  max_factors: 5
+  network_selection:
+    method: all_single_relations_then_top_response
+    min_response_score: 0.0
   max_interactions: 2
   state_dependent: true
   isoform_state:

@@ -67,7 +67,15 @@ def validate_config(c):
     if c['model']['response'] not in ('linear','spline'): raise ValueError('response must be linear or spline')
     for key in ['ridge','interaction_ridge','state_ridge','dm_concentration']:
         if c['model'][key] <= 0: raise ValueError(f'{key} must be positive')
-    if c['model']['max_factors'] < 1 or c['model']['max_interactions'] < 0: raise ValueError('Invalid model budget')
+    if (isinstance(c['model']['max_factors'],bool) or not isinstance(c['model']['max_factors'],int)
+            or c['model']['max_factors'] < 1 or c['model']['max_interactions'] < 0):
+        raise ValueError('Invalid model budget')
+    selection=c['model'].setdefault('network_selection',{'method':'all_single_relations_then_top_response','min_response_score':0.0})
+    if selection.get('method')!='all_single_relations_then_top_response':
+        raise ValueError('model.network_selection.method must be all_single_relations_then_top_response')
+    minimum=selection.get('min_response_score',0.)
+    if isinstance(minimum,bool) or not isinstance(minimum,(int,float)) or not np.isfinite(minimum) or minimum<0:
+        raise ValueError('model.network_selection.min_response_score must be finite and nonnegative')
     from .composition import settings
     iso=settings(c)
     for key in ['max_events_per_factor','min_branch_molecules','min_branch_cells','min_joint_cells','ridge','count_shrinkage']:

@@ -86,8 +86,15 @@ def fit(c,event_limit=None):
     from .model import fit_models
     from .structure import load_structures
     p,data,frame,times,prior,X=fitted_inputs(c)
-    LOG.info('Fitting joint conditional count models; event_limit=%s',event_limit)
-    models,audit=fit_models(data,frame,times,prior,X,c,event_limit)
+    LOG.info('Learning all candidate single relations, then selecting joint inputs; event_limit=%s',event_limit)
+    network_path=p/'regulatory_network.duckdb'
+    models,audit=fit_models(data,frame,times,prior,X,c,event_limit,network_path=network_path)
+    import duckdb
+    with duckdb.connect(str(network_path),read_only=True) as network:
+        network.execute('''COPY (SELECT event_id,gene_id,factor_id,gene_symbol,status,
+            response_score,supported_adjacent_pairs,selection_rank,selected,WT_weight,candidate_json
+            FROM single_relations ORDER BY event_index,selection_rank NULLS LAST,factor_id)
+            TO ? (HEADER,DELIMITER '\t',COMPRESSION GZIP)''',[str(p/'regulatory_network.tsv.gz')])
     for e,m in models.items():
         m['observed_denominators']=np.asarray(data['C'][:,data['offsets'][int(e)]:data['offsets'][int(e)+1]].sum(1)).ravel().tolist()
     dump(p/'models.json',models);audit.to_csv(p/'fit_diagnostics.tsv',sep='\t',index=False)
@@ -122,7 +129,10 @@ def fit(c,event_limit=None):
         'predictive_benchmark':None,'intervals':'not_estimated_unless_bootstrap_requested',
         'events_with_isoform_inputs':sum(bool(m.get('design',{}).get('compositions')) for m in models.values()),
         'manual_functional_weights_required':False,'S_count_unit':data.get('S_count_unit','integer_umi'),
-        'models_sha256':digest(p/'models.json'),'structures_sha256':digest(p/'structures.json')}
+        'models_sha256':digest(p/'models.json'),'structures_sha256':digest(p/'structures.json'),
+        'network':json.loads(network_path.with_suffix('.summary.json').read_text()),
+        'network_sha256':digest(network_path),
+        'max_factors_after_network_learning':c['model']['max_factors']}
     dump(p/'fit_summary.json',summary);LOG.info('%s',summary)
 
 

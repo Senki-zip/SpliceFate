@@ -146,12 +146,22 @@ NEMO P21 转换产物包括 35,317 个细胞、31,053 个基因、3,000 HVG、14
 2. **CytoTRACE→DPT**：每个上下文使用完整基因计数运行官方 CytoTRACE 0.3.1，最高有效分细胞作为起点；已知多阶段时在最早阶段内选择。评分同分按 cell ID 排序。
 3. **S 局部校准**：DPT 为初始轴，以可靠 E/I 相位或剪接组成约束做局部小幅修正。全部事件使用同一份时间；缺少 S 校准输入时使用原 DPT。
 4. **候选关系**：从同物种 motif、CLIP、PPI 与复合体生成直接及伙伴介导的事件候选，并保存证据来源。
-5. **响应拟合**：联合估计阶段、批次、轨迹背景、RBP 总表达、少量交互与局部组成对比；各事件采用多分支 softmax 和正则化 DM 计数目标。
+5. **先学习网络、再筛选输入**：对全部有先验证据的候选 RBP–事件关系逐条拟合条件 DM 响应，包含 RBP 总表达及可用的自身局部组成。完整单关系网络保存后，按 WT 拟合响应变化评分，为每个事件选择最多 5 个因子，再联合拟合阶段、批次、轨迹背景、总表达、交互与组成项。
 6. **虚拟扰动**：在表达原单位上乘以 `(1-q)`，转换回 log1p 后计算相对 WT 的响应差分。联合干预同时求值。
 7. **组成级联**：预测改变 RBP 自身剪接状态后，同步更新其组成输入，再由冻结的响应模型计算下一轮。
 8. **结构输出**：将最终事件响应约束到实际观测链的概率 simplex，记录组成、保留结构比例及优化状态。
 
 输出重点为事件分支概率变化、剪接链使用比例变化和 WT 学习的组成响应系数。独立扰动评价通过匹配目标、剂量、事件、条件和分支进行。
+
+```yaml
+model:
+  max_factors: 5
+  network_selection:
+    method: all_single_relations_then_top_response
+    min_response_score: 0.0
+```
+
+`max_factors` 限制最终联合模型的输入数。完整单关系学习覆盖所有候选，按 CausalBridge 的“单关系学习→WT 响应评分→组合拟合”顺序执行。评分使用同一上下文、阶段和批次内相邻 WT 细胞的因子响应变化；状态背景保持配对，事件缺失观测保留原位置。完整定义及保存格式见[网络学习说明](docs/REGULATORY_NETWORK_LEARNING_20261121.md)。
 
 ## 异构体组成和多轮传播
 
@@ -212,6 +222,8 @@ python scripts/finish_mouse_protein_dimensions.py
 | `prepared_arrays.npz` | 全事件共享的一维时间、PCA 和因子输入 |
 | `priors.json` | 因子轴、锚点、伙伴路径和局部组成状态 |
 | `models.json`、`fit_summary.json` | 拟合模型与统计 |
+| `regulatory_network.duckdb` | 全部单关系的拟合曲线、证据、得分及筛选结果 |
+| `regulatory_network.tsv.gz`、`regulatory_network.summary.json` | 完整关系表与网络统计 |
 | `isoform_response_weights.tsv` | 上游组成对下游事件的响应系数及联合支持 |
 | `all_event_status.tsv`、`fit_diagnostics.tsv` | 事件计数、拟合与支持诊断 |
 | `simulations/*/events.tsv.gz` | 各细胞分支概率及变化 |

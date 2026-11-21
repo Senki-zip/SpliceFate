@@ -1,5 +1,7 @@
 # SpliceFate v0.3 实现交付
 
+2026-11-21 网络更新：全部先验候选单关系完成 WT 拟合后，按学习响应评分为每事件保留最多 5 个输入，再联合拟合。完整网络保存为 `regulatory_network.duckdb` 并导出关系表。学习顺序、评分与筛选字段见[网络学习说明](REGULATORY_NETWORK_LEARNING_20261121.md)。
+
 2026-11-21 数据更新：GSE295932 已改为作者 `cluster` 整数 UMI 簇列，G 与 S 统一计数口径，重新选择 3,000 HVG；旧 count 加权版本保留但退出默认配置。细节、文库／细胞选择与散射过滤差异见 [数据转换开发记录](GSE295932_COUNT_SELECTION_20261121.md)。
 
 2026-11-20 更新：官方 CytoTRACE 0.3.1 已复制至 `tools/CytoTRACE_official/`。默认对每个轨迹上下文使用完整基因计数评分，最高分细胞作为 DPT 起点；多阶段时在最早阶段内选择。所有事件共享同一份 S 校准时间。最新接口以 README 为准。
@@ -22,6 +24,7 @@
 | 内含子/外显子计数相位证据、仅支持细胞的局部 DPT 修正 | `src/splicefate/intron_time.py` |
 | 原生 mm10 motif 扫描/CLIP、PPI 与复合体候选路径 | `src/splicefate/priors.py` |
 | 联合条件主效应、样条、少量交互、DM 计数似然 | `src/splicefate/model.py` |
+| 全部候选单关系学习、WT 响应评分与后置输入筛选 | `src/splicefate/network.py` |
 | 可判定事件–链映射、合法 simplex 重建、结构支持/冲突 | `src/splicefate/structure.py` |
 | 单/联合剂量、冻结 WT 差分、同步多轮组成反馈与停止原因 | `src/splicefate/simulation.py` |
 | prepare / fit / simulate / run / evaluate 命令，bootstrap 与逐事件审计 | `src/splicefate/cli.py` |
