@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "splicefate"
+version = "0.3.0"
+description = "WT-conditioned splicing perturbation with traceable RNA and protein priors"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "scipy>=1.14", "pandas>=2.2", "scikit-learn>=1.5", "scanpy>=1.11", "pynndescent>=0.5.13,<0.6", "umap-learn>=0.5.12,<0.6", "anndata>=0.10", "igraph>=0.11", "leidenalg>=0.10", "duckdb>=2.0", "pyyaml>=6", "numba>=0.61"]
+
+[project.optional-dependencies]
+conversion = ["scikit-misc>=0.3"]
+
+[project.scripts]
+splicefate = "splicefate.cli:main"
+splicefate-convert = "splicefate.convert:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+splicefate = ["*.R"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

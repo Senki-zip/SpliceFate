@@ -1,0 +1,50 @@
+# Scientific data and generated artifacts
+/data/
+/runs/
+/test/
+/tests/
+/md5sum.txt
+
+# Unit tests and installation/reference smoke scripts
+/scripts/check_*.py
+/scripts/run_model_smoke.py
+**/test_*.py
+**/*_test.py
+
+# Local Python/R environments and caches
+.venv*/
+__pycache__/
+*.py[cod]
+*.nbi
+*.nbc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+build/
+dist/
+.DS_Store
+.Rhistory
+.RData
+.Rproj.user/
+.env
+.env.*
+!.env.example
+
+# Third-party reference checkouts and binaries are not project sources.
+# Keep only the small official CytoTRACE source dependency and its notices.
+/tools/*
+!/tools/CytoTRACE_official/
+/tools/CytoTRACE_official/data/
+/tools/CytoTRACE_official/test
+/tools/CytoTRACE_official/tests/
+/tools/CytoTRACE_official/.git/
+/tools/CytoTRACE_official/*.Rproj
+
+# SSH credentials and local private keys
+*.pem
+*.key
+id_ed25519*
+id_rsa*

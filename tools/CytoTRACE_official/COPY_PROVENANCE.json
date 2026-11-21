@@ -1,0 +1,148 @@
+{
+  "copied_at": "2026-11-20T17:50:26+0800",
+  "source_directory": "/home/huangtao/Desktop/huangchengqi/CausalBridge/CytoTRACE_official",
+  "source_git_commit": "f4ff6c0ab93cc704eef44e17adcd5c6baf09703a",
+  "package_version": "0.3.1",
+  "files": [
+    {
+      "path": ".Rbuildignore",
+      "sha256": "49ac1afea9aa06a2540e48e9142f8900c49235538f7b4eafa2fd55cd48eb325e",
+      "bytes": 28
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "2aff592f85e5b8f9162eda24f12962c2fd27dce939cbc75625c82b8c79335d20",
+      "bytes": 40
+    },
+    {
+      "path": "CytoTRACE.Rproj",
+      "sha256": "0264dccd0258ed101f74964944ef4c62e2376dbeb31aa90830376b54759f8a44",
+      "bytes": 424
+    },
+    {
+      "path": "DESCRIPTION",
+      "sha256": "5154a9187ef15780936fb497628e9a4927a4a1cc75f4228e1e877336915499ed",
+      "bytes": 1045
+    },
+    {
+      "path": "LICENSE.txt",
+      "sha256": "a6b454c5f0e0c6bbca7527e61ea75d69bad6d6e0c770439b9b61c1b62fb3d635",
+      "bytes": 1971
+    },
+    {
+      "path": "NAMESPACE",
+      "sha256": "e0971121fce5398d91959aa810afc7157b3e60e00cd8a19db9a9fbdaae3f7e03",
+      "bytes": 127
+    },
+    {
+      "path": "R/CytoTRACE.R",
+      "sha256": "7dafcfa42c792eaffe1048f4716cb54105b31f2ad01c4f0c26868c10593b155d",
+      "bytes": 10374
+    },
+    {
+      "path": "R/data_documentation.R",
+      "sha256": "83fb417e95b6f06a348ec2ac92453a222c23eaf5829d3269c53f80b619f53b9f",
+      "bytes": 3235
+    },
+    {
+      "path": "R/iCytoTRACE.R",
+      "sha256": "4689ce1ce4b58b0ae2f694db3c0f674c4f72b71dd757657bfbab80a77ceaf2d1",
+      "bytes": 9798
+    },
+    {
+      "path": "R/plotCytoGenes.R",
+      "sha256": "8bdc3dc91b80efd58f6ed55c9e517d3727758f15ce226a0febbfc4ec5de53098",
+      "bytes": 4041
+    },
+    {
+      "path": "R/plotCytoTRACE.R",
+      "sha256": "d750411114da29f75b443533f39164af8e14945d7967b5dc4c1dea032268ad80",
+      "bytes": 16120
+    },
+    {
+      "path": "R/zzz.R",
+      "sha256": "961619e81206477070feab7a1af65e58777d38b442054a7b1454ac53dd73ccad",
+      "bytes": 1154
+    },
+    {
+      "path": "README.md",
+      "sha256": "8789af96628e3142203a7f0082f28edb79c1ab278ff3ebe2b0b6365eefaa8efc",
+      "bytes": 5047
+    },
+    {
+      "path": "data/marrow_10x_expr.rda",
+      "sha256": "aeda5f912851aa5d2f168dfc10af4e2d529ff32d6cf17218a71e81ede13be21e",
+      "bytes": 12654083
+    },
+    {
+      "path": "data/marrow_10x_pheno.rda",
+      "sha256": "ec270fcd3c041c9a071dad295b78f2196642e2433b8bfde763eb80299d63dd30",
+      "bytes": 22195
+    },
+    {
+      "path": "data/marrow_plate_expr.rda",
+      "sha256": "1f060c30f79e2c3de6550186aebf9c8112c2333c59fdad287e16fae4531d59e3",
+      "bytes": 36664476
+    },
+    {
+      "path": "data/marrow_plate_pheno.rda",
+      "sha256": "037285218b2e952c119741412f0dae1ec9be01b5200a0c4d24ec451afb75e970",
+      "bytes": 15270
+    },
+    {
+      "path": "man/cytoTRACE.Rd",
+      "sha256": "bd28779f781c6b3163a156be825bedd4665b3d641c98fc28d355f704b2cb68e0",
+      "bytes": 3207
+    },
+    {
+      "path": "man/figures/cytotrace_logo.png",
+      "sha256": "de23b1fa43acb281b3ea7b26aee37a61a8e39314915fb62978dd94d48ff853db",
+      "bytes": 21623
+    },
+    {
+      "path": "man/hello.Rd",
+      "sha256": "f0307420b147e83a51f4623985c87481e8911459a9e258aed0b5732af9cd8a18",
+      "bytes": 128
+    },
+    {
+      "path": "man/iCytoTRACE.Rd",
+      "sha256": "8f69dd0b265a632d9987e812cf7e2151c77f60edcc24c9c6c8ebb86b2a3387f1",
+      "bytes": 2207
+    },
+    {
+      "path": "man/marrow_10x_expr.Rd",
+      "sha256": "c3d3e7396bb2d34adb003965b9f0af112673d00f4bc312311b25c38687738d7f",
+      "bytes": 978
+    },
+    {
+      "path": "man/marrow_10x_pheno.Rd",
+      "sha256": "56aca888ac0cc24ef5cddd8f205786ba1057b39505d24a339c98c81076c3a66c",
+      "bytes": 965
+    },
+    {
+      "path": "man/marrow_plate_expr.Rd",
+      "sha256": "7f556e0d2efe4fd201fdb38486f972a4cdbada8cc5c2492bfce0a22845cd0f29",
+      "bytes": 973
+    },
+    {
+      "path": "man/marrow_plate_pheno.Rd",
+      "sha256": "04c4f46c31bedeff97749eba90880e178d48287fb1273545c123249cda7e606d",
+      "bytes": 985
+    },
+    {
+      "path": "man/plotCytoGenes.Rd",
+      "sha256": "aa578d99177f5dd0067ca9db17b3418a83e4cb2e873cb7b1f9c034a4e8377364",
+      "bytes": 1723
+    },
+    {
+      "path": "man/plotCytoTRACE.Rd",
+      "sha256": "fdb39de88941b746c7775e1aeb3004c3eae6e09fdb3e7c190cfd3fc2ea5bf142",
+      "bytes": 2800
+    },
+    {
+      "path": "test",
+      "sha256": "1a4a5e5f597eb3ea95246d4eba1b76062944087ab44ff291c801dfe2549c6858",
+      "bytes": 3612
+    }
+  ]
+}

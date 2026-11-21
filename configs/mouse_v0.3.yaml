@@ -1,0 +1,109 @@
+# Explicit engineering defaults, not tuned to external KO effects.
+project_root: ..
+input:
+  genes: data/processed/GSE250381_mm10_splice_chains_20261108
+  events: data/processed/GSE250381_local_events_v8_20261108
+  database: data/external/mouse_rbp_unified_20261116/mouse_rbp.duckdb
+  fasta: ../reference_documents/refdata-cellranger-arc-mm10-2020-A-2.0.0/fasta/genome.fa
+  velocity_times: null
+  intron_counts: null
+assembly: mm10
+output: runs/splicefate_v0.3
+runtime:
+  python_binary: /home/huangtao/miniconda3/envs/SpliceFate/bin/python
+  threads: 4
+execution:
+  stages: [prepare, fit, simulate]
+  event_limit: null
+  bootstrap: 0
+normalization:
+  target_sum: 100000
+  hvg_count: 3000
+  hvg_method: existing_seurat_v3_axis
+clustering:
+  enabled: false
+  cluster_key: leiden
+  n_neighbors: 20
+  n_pcs: 20
+  resolution: 0.5
+  random_state: 42
+  min_cells_per_cluster: 50
+  fallback_pseudotime_method: dpt
+  paga:
+    enabled: false
+    connectivity_threshold: 0.08
+    min_cells_per_lineage: 50
+trajectory:
+  # Independent intron/exon phase calibration; scVelo is not a required runtime.
+  # Missing intron inputs preserve G time and are explicitly recorded as not run.
+  S_calibration: intron_phase
+  intron_phase:
+    weight: 0.25
+    reference_quantile: 0.7
+    min_gene_cells: 8
+    min_region_counts: 20
+    count_shrinkage: 5.0
+    min_shared_genes: 5
+    reliability_genes: 20
+  method: dpt
+  root_cell: null
+  root_method: cytotrace
+  cytotrace:
+    source_dir: tools/CytoTRACE_official
+    rscript_binary: /home/huangtao/miniconda3/envs/CausalBridge/bin/Rscript
+    seed: 42
+    enable_fast: true
+    ncores: 1
+    subsample_size: 1000
+  isolate_stages: [ESC]
+  splice_weight: 0.25
+  velocity_weight: 0.25
+  prior_strength: 2.0
+  min_shared_events: 10
+  reliability_events: 50
+  min_component_cells: 5
+priors:
+  targets: [ALL]
+  include_family_shared: true
+  max_partners_per_factor: 8
+  min_experiment_score: 400
+  allow_unspecified_association: false
+  window_bp: 100
+  motif_pvalue: 0.0001
+  # Per position/motif candidate threshold; not event FDR or binding probability.
+  min_event_cells: 8
+  min_event_molecules: 20
+model:
+  response: spline
+  spline_knots: 3
+  state_ridge: 1.0
+  ridge: 10.0
+  interaction_ridge: 30.0
+  dm_concentration: 20.0
+  max_factors: 6
+  max_interactions: 2
+  state_dependent: true
+  isoform_state:
+    enabled: true
+    max_events_per_factor: 1
+    max_branches: 4
+    min_branch_molecules: 20
+    min_branch_cells: 10
+    min_joint_cells: 20
+    count_shrinkage: 2.0
+    ridge: 10.0
+  max_iterations: 400
+  collinearity_threshold: 0.95
+  support_neighbors: 10
+  support_distance_quantile: 0.95
+  min_conditional_residual_sd: 0.02
+simulation:
+  target_sets: [[Rbfox2]]
+  strengths: [0.0, 0.5, 1.0]
+  max_rounds: 3
+  convergence_tolerance: 0.000001
+  divergence_limit: 10.0
+  max_chain_states: 128
+  structure_lambda: 10.0
+  structure_prior_strength: 1.0
+  gene_limit: null
