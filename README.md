@@ -113,6 +113,7 @@ splicefate simulate --config configs/gse295932_nontarget_hg38.yaml --targets RBF
 python scripts/download_gse295932.py
 python scripts/separate_gse295932_controls.py
 python scripts/convert_gse295932.py
+python scripts/quantify_gse295932_regions.py
 python scripts/build_human_model_priors.py
 ```
 
@@ -192,7 +193,9 @@ model:
 
 先估计基因参考关系 `I ≈ slope × E`，相位残差与邻居外显子状态差提供局部方向，随后限制 DPT 修正幅度、固定起点和阶段边界。没有支持的细胞保持原值。
 
-当前 NEMO 和 GSE295932 输入以剪接链／事件计数为主，独立 E/I 矩阵尚未量化。AllInfo 的 intron chain 是已切除的缺口；比对块中的 intronic coverage 可以用于后续区域定量。`intron_counts: null` 时使用 CytoTRACE 定向的 G-only DPT。
+GSE295932 的 E/I 区域计数由 `scripts/quantify_gse295932_regions.py` 从作者原始结构表的整数 `cluster` 列量化，保存在当前转换目录的 `regions/`。E 为覆盖外显子区域的簇数，I 为连续比对块覆盖严格内含子区域的簇数，同一簇可同时贡献 E 和 I。计数定义、覆盖统计及校准检查见 [E/I 区域量化记录](docs/GSE295932_REGION_QUANTIFICATION_20261124.md)。
+
+将 `input.intron_counts` 设为 `data/processed/GSE295932_Nontarget_hg38_cluster_20261121/regions` 可启用当前 `intron_phase` 校准。默认配置仍保留 `null`；本次量化与校准检查使用独立输出目录。NEMO 的独立 E/I 矩阵尚未量化。AllInfo 的 intron chain 是已切除的缺口，区域计数读取比对块覆盖。`intron_counts: null` 时使用 CytoTRACE 定向的 G-only DPT。
 
 可选完整动力学比较接口 `splicefate.velocity` 使用经分类核验的 gene-level spliced/unspliced 整数层，输出 `cell`、`latent_time`、`qc_pass`；路径写入 `input.velocity_times`。
 
