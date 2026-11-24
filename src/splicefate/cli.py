@@ -92,7 +92,10 @@ def fit(c,event_limit=None):
     import duckdb
     with duckdb.connect(str(network_path),read_only=True) as network:
         network.execute('''COPY (SELECT event_id,gene_id,factor_id,gene_symbol,status,
-            response_score,supported_adjacent_pairs,selection_rank,selected,WT_weight,candidate_json
+            response_score,supported_adjacent_pairs,quality_status,fit_gain,stability,
+            bootstrap_successes,bootstrap_positive_gain_fraction,bootstrap_effect_agreement,
+            bootstrap_gain_mean,normalized_fit_gain,normalized_response,selection_score,
+            selection_rank,selected,WT_weight,candidate_json
             FROM single_relations ORDER BY event_index,selection_rank NULLS LAST,factor_id)
             TO ? (HEADER,DELIMITER '\t',COMPRESSION GZIP)''',[str(p/'regulatory_network.tsv.gz')])
     for e,m in models.items():

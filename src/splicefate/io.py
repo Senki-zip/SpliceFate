@@ -70,12 +70,23 @@ def validate_config(c):
     if (isinstance(c['model']['max_factors'],bool) or not isinstance(c['model']['max_factors'],int)
             or c['model']['max_factors'] < 1 or c['model']['max_interactions'] < 0):
         raise ValueError('Invalid model budget')
-    selection=c['model'].setdefault('network_selection',{'method':'all_single_relations_then_top_response','min_response_score':0.0})
-    if selection.get('method')!='all_single_relations_then_top_response':
-        raise ValueError('model.network_selection.method must be all_single_relations_then_top_response')
-    minimum=selection.get('min_response_score',0.)
-    if isinstance(minimum,bool) or not isinstance(minimum,(int,float)) or not np.isfinite(minimum) or minimum<0:
-        raise ValueError('model.network_selection.min_response_score must be finite and nonnegative')
+    from .network import selection_settings,POLICY
+    selection=selection_settings(c);c['model']['network_selection']=selection
+    if selection['method']!=POLICY:
+        raise ValueError('model.network_selection.method must be '+POLICY)
+    for key in ['min_response_score','min_fit_gain']:
+        minimum=selection[key]
+        if isinstance(minimum,bool) or not isinstance(minimum,(int,float)) or not np.isfinite(minimum) or minimum<0:
+            raise ValueError('model.network_selection.'+key+' must be finite and nonnegative')
+    for key,minimum in [('bootstrap_repeats',2),('bootstrap_seed',0)]:
+        value=selection[key]
+        if isinstance(value,bool) or not isinstance(value,int) or value<minimum:
+            raise ValueError('Invalid model.network_selection.'+key)
+    weights=selection['weights']
+    if not isinstance(weights,dict) or set(weights)!={'fit_gain','stability','response'}:
+        raise ValueError('network selection weights require fit_gain, stability and response')
+    if any(isinstance(w,bool) or not isinstance(w,(int,float)) or not np.isfinite(w) or w<0 for w in weights.values()) or sum(weights.values())<=0:
+        raise ValueError('network selection weights must be finite, nonnegative with positive sum')
     from .composition import settings
     iso=settings(c)
     for key in ['max_events_per_factor','min_branch_molecules','min_branch_cells','min_joint_cells','ridge','count_shrinkage']:

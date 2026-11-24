@@ -82,8 +82,15 @@ model:
   dm_concentration: 20.0
   max_factors: 5
   network_selection:
-    method: all_single_relations_then_top_response
+    method: all_single_relations_then_weighted_quality
     min_response_score: 0.0
+    min_fit_gain: 0.0
+    bootstrap_repeats: 10
+    bootstrap_seed: 42
+    weights:
+      fit_gain: 0.45
+      stability: 0.45
+      response: 0.10
   max_interactions: 2
   state_dependent: true
   isoform_state:

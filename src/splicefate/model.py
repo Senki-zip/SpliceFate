@@ -140,17 +140,25 @@ def dm_objective(flat,D,C,penalty,kappa):
     return float(loss),grad.ravel()
 
 
+def fit_count_design(D,C,pen,c):
+    """Fit one fixed WT design; used for full fits and cell bootstrap refits."""
+    k=C.shape[1];theta=np.zeros((D.shape[1],k-1))
+    mean=(C.sum(0)+.5)/(C.sum()+k*.5);theta[0]=np.log(mean[:-1]/mean[-1])
+    fit=minimize(dm_objective,theta.ravel(),args=(D,C,pen,c['model']['dm_concentration']),
+                 method='L-BFGS-B',jac=True,options={'maxiter':c['model']['max_iterations'],'ftol':1e-10,'gtol':1e-6})
+    if not fit.success:return {'status':'optimizer_not_converged','message':str(fit.message),'iterations':int(fit.nit)}
+    if not np.isfinite(fit.fun):return {'status':'numerical_failure'}
+    return {'status':'ok','coefficients':fit.x.reshape(D.shape[1],k-1).tolist(),
+            'fit_objective':float(fit.fun),'iterations':int(fit.nit)}
+
+
 def fit_event(C,X,frame,t,indices,pairs,c,composition_features=()):
     good=C.sum(1)>0
     if good.sum()<c['priors']['min_event_cells']:return {'status':'insufficient_event_counts'}
     D,pen,spec=fit_design(X,frame,t,indices,pairs,c,composition_features,good)
-    k=C.shape[1];theta=np.zeros((D.shape[1],k-1))
-    mean=(C.sum(0)+.5)/(C.sum()+k*.5);theta[0]=np.log(mean[:-1]/mean[-1])
-    fit=minimize(dm_objective,theta.ravel(),args=(D[good],C[good],pen,c['model']['dm_concentration']),
-                 method='L-BFGS-B',jac=True,options={'maxiter':c['model']['max_iterations'],'ftol':1e-10,'gtol':1e-6})
-    if not fit.success:return {'status':'optimizer_not_converged','message':str(fit.message),'iterations':int(fit.nit)}
-    if not np.isfinite(fit.fun):return {'status':'numerical_failure'}
-    coeff=fit.x.reshape(D.shape[1],k-1);pred=softmax(np.column_stack([D@coeff,np.zeros(len(D))]),axis=1)
+    fit=fit_count_design(D[good],C[good],pen,c)
+    if fit['status']!='ok':return fit
+    coeff=np.asarray(fit['coefficients']);pred=softmax(np.column_stack([D@coeff,np.zeros(len(D))]),axis=1)
     B,_=state_basis(frame,t,spec['state']);diagnostics={}
     for j in indices:
         other=[l for l in indices if l!=j]
@@ -169,7 +177,7 @@ def fit_event(C,X,frame,t,indices,pairs,c,composition_features=()):
         radius=float(np.quantile(nearest,c['model']['support_distance_quantile']))
     else:radius=0
     return {'status':'ok','design':spec,'coefficients':coeff.tolist(),'kappa':c['model']['dm_concentration'],
-        'input_indices':list(indices),'pairs':[list(p) for p in pairs],'fit_objective':float(fit.fun),'iterations':int(fit.nit),
+        'input_indices':list(indices),'pairs':[list(p) for p in pairs],'fit_objective':fit['fit_objective'],'iterations':fit['iterations'],
         'counted_cells':int(good.sum()),'molecules':float(C.sum()),'training_only':True,'input_diagnostics':diagnostics,
         'support':{'mean':ref.mean(0).tolist(),'scale':std.tolist(),'reference_inputs':ref.tolist(),
                    'reference_branches':frame.branch[good].tolist(),'radius':max(radius,1e-6)},
@@ -231,12 +239,13 @@ def fit_models(data,frame,times,prior,X,c,event_limit=None,network_path=None):
         event_ids=[r[0] for r in network.execute('SELECT DISTINCT event_index FROM single_relations ORDER BY event_index').fetchall()]
         for e in event_ids:
             event=data['events'][e]
-            rows=network.execute('''SELECT candidate_json,response_score,selection_rank,WT_weight
+            rows=network.execute('''SELECT candidate_json,response_score,selection_rank,WT_weight,selection_score,fit_gain,stability
                 FROM single_relations WHERE event_index=? AND selected ORDER BY selection_rank''',[e]).fetchall()
-            candidates=[{**json.loads(raw),'WT_response_score':score,'selection_rank':rank,'WT_network_weight':weight}
-                        for raw,score,rank,weight in rows]
+            candidates=[{**json.loads(raw),'WT_response_score':score,'selection_rank':rank,'WT_network_weight':weight,
+                         'selection_score':quality,'fit_gain':gain,'stability':stability}
+                        for raw,score,rank,weight,quality,gain,stability in rows]
             indices=[findex[r['factor_id']] for r in candidates]
-            scores={r['factor_id']:r['WT_response_score'] for r in candidates}
+            scores={r['factor_id']:r['selection_score'] for r in candidates}
             accepted=set(scores)
             ranked_pairs=sorted((p for p in pairs if set(p)<=accepted),
                                 key=lambda p:(-min(scores[f] for f in p),-sum(scores[f] for f in p),p))
