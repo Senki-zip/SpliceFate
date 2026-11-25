@@ -24,6 +24,30 @@ def source_files(c):
     return [root/'R/CytoTRACE.R',root/'DESCRIPTION',root/'COPY_PROVENANCE.json']
 
 
+def r_runtime(cfg):
+    binary=os.environ.get('SPLICEFATE_RSCRIPT',str(cfg.get('rscript_binary','Rscript')))
+    executable=shutil.which(binary)
+    if not executable:raise RuntimeError('Rscript not found: '+binary)
+    env=os.environ.copy()
+    for name in ['R_HOME','R_ARCH','R_LIBS']:env.pop(name,None)
+    prefix=Path(executable).absolute().parent.parent;library=prefix/'lib/R/library'
+    # Respect system R installs; only select a prefix library if it exists.
+    if library.is_dir():env.update(R_LIBS_USER=str(library),R_LIBS_SITE=str(library),LD_LIBRARY_PATH=str(prefix/'lib'))
+    for name in ['OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS']:env[name]='1'
+    return executable,env,library
+
+
+def check_runtime(cfg):
+    source=Path(cfg['source_dir'])/'R/CytoTRACE.R'
+    if digest(source)!=OFFICIAL_SOURCE_SHA256 or 'Version: 0.3.1' not in source.parent.parent.joinpath('DESCRIPTION').read_text():
+        raise ValueError('Expected unmodified official CytoTRACE 0.3.1 source')
+    executable,env,_=r_runtime(cfg)
+    expression='pkgs <- c("Matrix","HiClimR","ccaPP","nnls"); missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly=TRUE)]; if(length(missing)) stop(paste("Missing R packages:",paste(missing,collapse=", "))); cat(R.version.string)'
+    result=subprocess.run([executable,'--vanilla','-e',expression],env=env,capture_output=True,text=True,timeout=60)
+    if result.returncode:raise RuntimeError('CytoTRACE R dependency check failed: '+result.stdout+result.stderr)
+    return {'Rscript':executable,'R':result.stdout,'source_sha256':OFFICIAL_SOURCE_SHA256}
+
+
 def compute_scores(counts,cells,genes,cfg,output=None):
     cells=list(map(str,cells));genes=list(map(str,genes));matrix=sparse.csr_matrix(counts)
     if matrix.shape!=(len(cells),len(genes)) or len(set(cells))!=len(cells) or len(set(genes))!=len(genes):
@@ -36,15 +60,8 @@ def compute_scores(counts,cells,genes,cfg,output=None):
     root=Path(cfg['source_dir']);source=root/'R/CytoTRACE.R'
     if digest(source)!=OFFICIAL_SOURCE_SHA256 or 'Version: 0.3.1' not in (root/'DESCRIPTION').read_text():
         raise ValueError('Expected unmodified official CytoTRACE 0.3.1 source')
-    executable=shutil.which(os.environ.get('SPLICEFATE_RSCRIPT',str(cfg.get('rscript_binary','Rscript'))))
-    if executable is None:raise RuntimeError('CytoTRACE requires a working trajectory.cytotrace.rscript_binary')
-    prefix=Path(executable).absolute().parent.parent
+    executable,env,library=r_runtime(cfg)
     runner=Path(__file__).with_name('cytotrace_runner.R')
-    env=os.environ.copy()
-    for name in ['R_HOME','R_ARCH','R_LIBS']:env.pop(name,None)
-    library=prefix/'lib/R/library'
-    env.update(R_LIBS_USER=str(library),R_LIBS_SITE=str(library),LD_LIBRARY_PATH=str(prefix/'lib'),
-               OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1')
     params={'seed':int(cfg.get('seed',42)), 'enable_fast':bool(cfg.get('enable_fast',True)),
             'ncores':int(cfg.get('ncores',1)),'subsample_size':int(cfg.get('subsample_size',1000))}
     with tempfile.TemporaryDirectory(prefix='splicefate_cytotrace_') as temp:

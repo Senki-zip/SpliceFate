@@ -28,13 +28,13 @@ def load_structures(data,models,c):
     genes={m['gene_id'] for m in models.values() if m['status']=='ok'}
     events_by_gene={g:[m['event_index'] for m in models.values() if m['status']=='ok' and m['gene_id']==g] for g in genes}
     root=Path(c['input']['genes']);counts=sparse.load_npz(root/'isoform_counts.npz').tocsr()
-    indices=[];records=[]
+    records_by_gene={}
     for chunk in pd.read_csv(root/'isoforms.tsv',sep='\t',chunksize=20000):
         chosen=chunk[chunk.gene.isin(genes)]
-        indices.extend(chosen.index.tolist());records.extend(chosen.to_dict('records'))
+        for index,r in zip(chosen.index,chosen.to_dict('records')):records_by_gene.setdefault(r['gene'],[]).append((index,r))
     totals=np.asarray(counts.sum(0)).ravel();result={}
     for gene in sorted(genes):
-        group=[(index,r) for index,r in zip(indices,records) if r['gene']==gene]
+        group=records_by_gene.get(gene,[])
         group.sort(key=lambda x:(-totals[x[0]],x[1]['isoform']))
         all_total=sum(totals[i] for i,_ in group)
         selected=group[:c['simulation']['max_chain_states']]
@@ -42,9 +42,9 @@ def load_structures(data,models,c):
         idx=[i for i,_ in selected];chainrecords=[r for _,r in selected]
         eventids=events_by_gene[gene]
         maps={str(e):[chain_event_branch(r,data['events'][e]) for r in chainrecords] for e in eventids}
-        C=counts[:,idx].toarray().astype(float)
+        C=counts[:,idx].astype(float)
         result[gene]={'chain_ids':[r['isoform'] for r in chainrecords],
-            'counts':C.tolist(),'event_branch_maps':maps,
+            'counts':C,'event_branch_maps':maps,
             'retained_chain_molecule_fraction':float(totals[idx].sum()/all_total) if all_total else 0.,
             'structure_scope':'observed_splice_chain; not guaranteed full_length',
             'eligibility_basis':'representative_corrected_exon_blocks; molecule_specific_completeness_unresolved',
@@ -88,7 +88,7 @@ def reconstruct(prior,maps,targets,lam):
 def structure_predictions(structures,event_wt,event_new,c):
     result={};stats=[]
     for gene,structure in structures.items():
-        C=np.asarray(structure['counts']);total=C.sum(1);k=C.shape[1]
+        C=structure['counts'].toarray() if sparse.issparse(structure['counts']) else np.asarray(structure['counts']);total=C.sum(1);k=C.shape[1]
         pooled=(C.sum(0)+.5)/(C.sum()+k*.5);s=c['simulation']['structure_prior_strength']
         ref=(C+s*pooled)/(total[:,None]+s);out=ref.copy();valid=total>0
         for i in range(len(C)):
@@ -109,3 +109,35 @@ def structure_predictions(structures,event_wt,event_new,c):
         result[gene]={'reference':ref,'perturbed':out,'valid':valid,'chain_ids':structure['chain_ids'],
                       'scope':structure['structure_scope'],'retained_fraction':structure['retained_chain_molecule_fraction']}
     return result,stats
+
+
+def _gene_prediction(job):
+    gene,structure,wt,new,c=job
+    result,audit=structure_predictions({gene:structure},wt,new,c)
+    return gene,result[gene],audit
+
+
+def _structure_worker_init():
+    import os
+    for name in ['OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMBA_NUM_THREADS']:os.environ[name]='1'
+    from threadpoolctl import threadpool_limits
+    threadpool_limits(1)
+
+
+def iter_structure_predictions(jobs,workers=1):
+    if workers<=1:
+        for job in jobs:yield _gene_prediction(job)
+        return
+    from concurrent.futures import ProcessPoolExecutor,wait,FIRST_COMPLETED
+    import multiprocessing as mp
+    with ProcessPoolExecutor(max_workers=workers,mp_context=mp.get_context('fork'),initializer=_structure_worker_init) as pool:
+        iterator=iter(jobs);pending=set()
+        for job in iterator:
+            pending.add(pool.submit(_gene_prediction,job))
+            if len(pending)>=2*workers:break
+        while pending:
+            done,_=wait(pending,return_when=FIRST_COMPLETED)
+            for f in done:
+                pending.remove(f);yield f.result()
+                job=next(iterator,None)
+                if job is not None:pending.add(pool.submit(_gene_prediction,job))

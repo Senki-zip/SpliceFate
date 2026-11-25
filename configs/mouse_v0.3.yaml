@@ -1,4 +1,3 @@
-# Explicit engineering defaults, not tuned to external KO effects.
 project_root: ..
 input:
   genes: data/processed/GSE250381_mm10_splice_chains_20261108
@@ -13,7 +12,10 @@ runtime:
   python_binary: python
   threads: 4
 execution:
-  stages: [prepare, fit, simulate]
+  stages:
+  - prepare
+  - fit
+  - simulate
   event_limit: null
   bootstrap: 0
 normalization:
@@ -34,8 +36,6 @@ clustering:
     connectivity_threshold: 0.08
     min_cells_per_lineage: 50
 trajectory:
-  # Independent intron/exon phase calibration; scVelo is not a required runtime.
-  # Missing intron inputs preserve G time and are explicitly recorded as not run.
   S_calibration: intron_phase
   intron_phase:
     weight: 0.25
@@ -55,7 +55,8 @@ trajectory:
     enable_fast: true
     ncores: 1
     subsample_size: 1000
-  isolate_stages: [ESC]
+  isolate_stages:
+  - ESC
   splice_weight: 0.25
   velocity_weight: 0.25
   prior_strength: 2.0
@@ -63,16 +64,18 @@ trajectory:
   reliability_events: 50
   min_component_cells: 5
 priors:
-  targets: [ALL]
+  targets:
+  - ALL
   include_family_shared: true
   max_partners_per_factor: 8
   min_experiment_score: 400
   allow_unspecified_association: false
   window_bp: 100
   motif_pvalue: 0.0001
-  # Per position/motif candidate threshold; not event FDR or binding probability.
   min_event_cells: 8
   min_event_molecules: 20
+  partner_hops: 1
+  extra_targets: []
 model:
   response: spline
   spline_knots: 3
@@ -84,13 +87,15 @@ model:
   network_selection:
     method: all_single_relations_then_weighted_quality
     min_response_score: 0.0
-    min_fit_gain: 0.0
     bootstrap_repeats: 10
     bootstrap_seed: 42
     weights:
       fit_gain: 0.45
       stability: 0.45
-      response: 0.10
+      response: 0.1
+    min_oob_fit_gain: 0.0
+    min_positive_gain_fraction: 0.6
+    min_stability: 0.3
   max_interactions: 2
   state_dependent: true
   isoform_state:
@@ -107,13 +112,18 @@ model:
   support_neighbors: 10
   support_distance_quantile: 0.95
   min_conditional_residual_sd: 0.02
+  max_event_branches: 8
 simulation:
-  target_sets: [[Rbfox2]]
-  strengths: [0.0, 0.5, 1.0]
+  target_sets:
+  - - Rbfox2
+  strengths:
+  - 0.0
+  - 0.5
+  - 1.0
   max_rounds: 3
-  convergence_tolerance: 0.000001
+  convergence_tolerance: 1.0e-06
   divergence_limit: 10.0
   max_chain_states: 128
   structure_lambda: 10.0
   structure_prior_strength: 1.0
-  gene_limit: null
+  write_unchanged_cells: false

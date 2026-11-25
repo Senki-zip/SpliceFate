@@ -80,7 +80,7 @@ def apply_intervention(X,indices,strength,prior):
     return out
 
 
-def next_inputs(X,direct,event_wt,event_new,models,prior):
+def next_inputs(X,direct,event_wt,event_new,models,prior,c=None):
     """Every round is recalculated relative to observed WT, never accumulated."""
     result=direct.copy();changes=[];by_state={}
     for feature in prior.get('composition_features',[]):by_state.setdefault(feature['state_index'],[]).append(feature)
@@ -92,7 +92,8 @@ def next_inputs(X,direct,event_wt,event_new,models,prior):
         delta=np.log(np.maximum(event_new[e],1e-300))-np.log(np.maximum(event_wt[e],1e-300))
         changed=observed&np.any(delta!=0,axis=1)
         if not changed.any():continue
-        P=C[changed]/N[changed,None]
+        s=settings(c or {'model':{}})['count_shrinkage'];pooled=np.asarray(state['pooled_composition'])
+        P=(C[changed]+s*pooled)/(N[changed,None]+s)
         updated=softmax(np.log(np.maximum(P,1e-12))+delta[changed],axis=1)
         rel=np.asarray(state['reliability']);factor=state['factor_index'];pooled=np.asarray(state['pooled_composition'])
         for feat in by_state.get(state['state_index'],[]):

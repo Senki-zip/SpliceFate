@@ -1,65 +1,54 @@
-# SpliceFate v0.3 实现交付
+# SpliceFate v0.3 实现
 
-2026-11-24 评分更新：网络筛选以条件 DM 拟合增益和 WT 内分层重采样稳定性为主，默认各占 45%，响应幅度占 10%。全部单关系完成学习与评分后，再保留每事件最多 5 个输入；评分权重及重采样次数均写入配置。
+更新日期：2026-11-25。改造依据：[第一轮完整运行方案](FULL_RUN_REDESIGN_PLAN_20261125.md)。
 
-2026-11-21 网络更新：全部先验候选单关系完成 WT 拟合后，按学习响应评分为每事件保留最多 5 个输入，再联合拟合。完整网络保存为 `regulatory_network.duckdb` 并导出关系表。学习顺序、评分与筛选字段见[网络学习说明](REGULATORY_NETWORK_LEARNING_20261121.md)。
+## 数据与主配置
 
-2026-11-21 数据更新：GSE295932 已改为作者 `cluster` 整数 UMI 簇列，G 与 S 统一计数口径，重新选择 3,000 HVG；旧 count 加权版本保留但退出默认配置。细节、文库／细胞选择与散射过滤差异见 [数据转换开发记录](GSE295932_COUNT_SELECTION_20261121.md)。
+主配置为 `configs/gse295932_stimulated_hg38.yaml`：GSM8961554 的 662 个刺激态 Nontarget WT 细胞独立转换、独立选择 Seurat v3 3,000 HVG，启用同条件 E/I 相位校准；Leiden 关闭。原合并数据和配置保留。
 
-2026-11-20 更新：官方 CytoTRACE 0.3.1 已复制至 `tools/CytoTRACE_official/`。默认对每个轨迹上下文使用完整基因计数评分，最高分细胞作为 DPT 起点；多阶段时在最早阶段内选择。所有事件共享同一份 S 校准时间。最新接口以 README 为准。
+G/S 均采用作者 `cluster` 整数 UMI 簇数。刺激态转换得到 16,097 个基因、156,406 条观测剪接链、19,171 个事件和 40,756 个分支。完整 G 为 3,599,481 个簇；E/I 区域计数分别为 3,129,285 / 356,916，逐项复现 G 输入。
 
-2026-11-20 后续更新：移除人工功能权重接口。新增 `composition.py`，以有公共锚点的 RBP 剪接状态和总表达共同拟合下游事件；从 WT 学习有符号权重，按冻结 WT 相对组成变化同步多轮传播。无固定时间 lag。蛋白结构域层仅作可选解释。
+CytoTRACE 官方 0.3.1 对完整 G 评分确定 DPT 起点，再做有观测支持的 E/I 局部校准。全部 WT 细胞参与模型拟合，无固定测试细胞集，无 S 填补。
 
-状态：核心代码实现完成，2026-11-16。依据用户最新指示，当前按可复用模型和独立合成数据验证，不继续根据当前数据集做模型取舍或启动完整训练。
+## 模块
 
-后续澄清已实现：DPT 先排序，再仅对有可靠剪接信息的部分做局部小幅校准；共享/全局上下文也用 DPT，不切换 Palantir。没有剪接支持的细胞精确保留初始 DPT 值，不重新推断全局轨迹，不需要完整动力学。独立 `src/splicefate/intron_time.py` 提供计数方向与局部修正；完整 scVelo 适配仅保留为可选比较。最新验证为 17 项通过，新增测试确认部分支持时其他细胞原值不变；下文原 11 项为初次交付记录。
-
-入口与完整输入/输出契约见项目 [README](../README.md)，配置见 `configs/mouse_v0.3.yaml`。
-
-## 已实现
-
-| 模块 | 入口 |
+| 模块 | 实现 |
 |---|---|
-| 原始整数分子输入、HVG/归一化契约、身份/文件指纹 | `src/splicefate/io.py` |
-| CausalBridge 配置 Leiden、小簇共享、统一 DPT 初始排序、断开状态 | `src/splicefate/trajectory.py` |
-| 覆盖度加权 S 校准、全事件共享时间、可选 velocity 融合 | `src/splicefate/trajectory.py` |
-| 内含子/外显子计数相位证据、仅支持细胞的局部 DPT 修正 | `src/splicefate/intron_time.py` |
-| 原生 mm10 motif 扫描/CLIP、PPI 与复合体候选路径 | `src/splicefate/priors.py` |
-| 联合条件主效应、样条、少量交互、DM 计数似然 | `src/splicefate/model.py` |
-| 全部候选单关系学习、WT 响应评分与后置输入筛选 | `src/splicefate/network.py` |
-| 可判定事件–链映射、合法 simplex 重建、结构支持/冲突 | `src/splicefate/structure.py` |
-| 单/联合剂量、冻结 WT 差分、同步多轮组成反馈与停止原因 | `src/splicefate/simulation.py` |
-| prepare / fit / simulate / run / evaluate 命令，bootstrap 与逐事件审计 | `src/splicefate/cli.py` |
-| 有真实 precursor/mature 输入时的 scVelo API 适配 | `src/splicefate/velocity.py` |
+| 按条件整数计数转换、Seurat v3 HVG | `scripts/convert_gse295932.py` |
+| 同条件 E/I 区域计数与 G 逐项验证 | `scripts/quantify_gse295932_regions.py` |
+| CytoTRACE、DPT 与 E/I 相位校准 | `cytotrace.py`、`trajectory.py`、`intron_time.py` |
+| 独立 1 跳伙伴检索、motif/CLIP 锚点 | `priors.py` |
+| OOB 质量评分、基线缓存、事件多进程与事务续跑 | `network.py` |
+| 观测细胞设计基、状态列去共线、固定浓度 DM、联合支持域 | `model.py` |
+| 观测组成特征、低计数平滑与同步级联 | `composition.py` |
+| DuckDB、NPZ 内存映射与稀疏结构矩阵 | `storage.py` |
+| 流式事件输出、三项贡献、状态与三种汇总 | `simulation.py` |
+| 按基因并行的观测链重建 | `structure.py` |
+| 同 WT 坐标的真实 KO 投影与独立评测 | `scripts/project_gse295932_ko_truth.py`、`cli.py` |
+| 配置启动、R 包与官方源码预检 | `runner.py`、`cytotrace.py` |
 
-算法输入不要求固定细胞数或固定十个阶段；示例数据适配仍是小鼠原生 mm10。模块按输入类型启用，相位校准读取独立 E/I 计数。
+源模块路径均相对 `src/splicefate/`。网络评分、默认门槛及续跑定义见[网络学习说明](REGULATORY_NETWORK_LEARNING_20261121.md)。
+
+## 模型与输出约定
+
+响应输入包括因子总表达、目标事件之外的自身观测组成、状态背景和少量受先验支持的交互。组成系数按下游事件从 WT 学习。`dm_concentration: 20.0`，事件最多 8 分支。
+
+支持域使用本模型实际输入的表达、组成和上下文标准化时间。观测 WT 中的第 k 近邻距离分位数确定支持半径，k 默认 10。输出域外、低表达尾区和弱可辨识性标记。
+
+组成传播以平滑参考 `(C + s × pooled)/(N+s)` 叠加相对 WT 的 log 概率变化，只更新有来源观测的细胞。零变化直接返回原输入。传播受轮数、收敛阈值和发散上限控制。
+
+每个事件概率变化拆为表达剂量、直接组成缩放、后续级联三项，逐细胞加和等于总变化。细胞表默认只保存直接建模或实际级联改变的事件；全事件汇总持续输出，包含目标关系状态、网络质量排名和分子加权／观测细胞均值／全细胞均值。真实 KO 比较默认采用分子加权口径。
+
+预处理保存 `priors_meta.json` 与 `priors.duckdb`。最终模型保存 `models.duckdb` 与连续数组 `model_arrays.npz`；剪接链保存 `structures_meta.json` 与稀疏 `structure_counts.npz`。各阶段以 SHA256 绑定输入、源码和产物。
+
+## 外部 KO
+
+投影脚本仅使用 WT 已发现的公共锚点和分支。官方 barcode 注释区分 11 个剪接因子 KO、BUB3 外部覆盖审计及 VIM 阴性对照；真实 KO 不参与网络学习或选参。WT 重投影结果须与训练分支计数逐项相同。外部真值文件记录分支分子数、WT/KO 观测细胞数与过滤状态，实际 KO 对应 `strength: 1.0`。
 
 ## 验证
 
-独立合成端到端输入包含原始 gene counts、事件分支、链结构、小型 DuckDB 先验和 FASTA。测试不读取项目真实数据，不访问网络。
+本地测试覆盖固定设计的袋外行隔离、噪声候选增益、缓存恒等、串并行一致性、事务续跑与指纹拒绝、DuckDB/NPZ/CSR 读写、观测细胞设计基、零剂量恒等、三项贡献加和、支持域、状态与汇总口径，以及 R 依赖检查。测试文件仅保留在本地。
 
-11 项测试通过，涵盖：
+真实数据验证采用刺激态全部 662 个 WT 细胞与少量事件，执行 prepare→fit→11 KO×3 剂量 simulate→evaluate。完整事件运行由主配置单独启动。
 
-- DM 目标函数解析梯度与有限差分一致。
-- 非 log 单位上的剂量缩放、冻结其他因子、q=0 严格不变。
-- 联合干预非加性、模型序列化一致、不涉及事件输入的干预严格无效应。
-- 公共锚点缺失不当作排除分支、合法结构概率约束。
-- 全部有支持的基因共同校准，所有事件共享一维时间，原 S 矩阵不变。
-- 无 S 证据精确保留 G 轨迹、velocity QC 缺失阶段不改变时间区间定义。
-- 没有真实 precursor/mature 量化来源时拒绝 velocity 输入。
-- 组成项只使用实际观测，保留全部细胞，不填补缺失比例。
-- WT 学习组成响应的同步多轮更新及 no-op 行为。
-- 独立合成 prepare→fit→simulate 全流程。
-- 外部评价必须匹配靶点、剂量、事件、状态、分支，不能混算。
-
-以下为最初版本的历史验证记录（当时含基因块排除，现已移除）：`runs/implementation_validation/pytest.log`、`implementation_report.json`。scVelo 0.3.4 适配器另用独立 100 细胞、30 基因 U/S 数据跑通 recover_dynamics、velocity_graph、latent_time，按两个基因块排除并记录 16/14 个支持基因；见 `scvelo_adapter_check.json`。检查覆盖 API 和数值计算路径。
-
-在用户要求“先不管当前数据集”之前，曾对现有输入完成一次 6 事件实现检查；该历史目录位于 `runs/splicefate_v0.3_implementation_check`。此后代码继续修订，没有继续用该数据集训练或按其结果选参；旧运行绑定当时源码，不能当作当前版本完整训练或复用缓存。
-
-## 动力学模块和级联的明确边界
-
-- scVelo 可选入口已实现并通过合成 API 检查；正式使用需独立验证的 spliced/unspliced 基因 UMI 与量化来源。
-- Region Velocity 已检索并审查其长读长专用源码，尚未包装运行或重新量化 exon/intron regions。详见 [源码审查](LONGREAD_VELOCITY_SOURCE_REVIEW_20261116.md)。
-- 直接 RBP 和伙伴模块通过其自身／伙伴 RNA 锚点生成事件候选。多轮传播由已拟合的 RBP 自身事件响应和下游组成系数连接，不要求人工蛋白功能注释。
-- 可选 bootstrap 对完整 WT 事件模型集合重拟合并运行多轮组成传播，默认未开启时不输出区间。
-- 没有实现 Δgene RNA 或命运概率；它们仍是 L1/L2 通过独立扰动验证后的后续模块。
+本轮验证完成：111 项测试、662 WT×20 事件、11 KO×3 剂量及真实中断续跑通过；完整统计见[验证记录](FULL_RUN_REDESIGN_VALIDATION_20261125.md)。

@@ -23,7 +23,7 @@ Python 和 R 默认从当前环境的 PATH 查找。跨环境运行可设置 `SP
 ## 配置和启动
 
 ```bash
-# 默认使用 configs/gse295932_nontarget_hg38.yaml
+# 默认使用 configs/gse295932_stimulated_hg38.yaml
 python scripts/run_splicefate.py --check
 python scripts/run_splicefate.py
 
@@ -36,14 +36,14 @@ python scripts/run_splicefate.py --config configs/nemo_p21_v0.3.yaml
 ```yaml
 project_root: ..
 input:
-  genes: data/processed/GSE295932_Nontarget_hg38_cluster_20261121/genes
-  events: data/processed/GSE295932_Nontarget_hg38_cluster_20261121/events
+  genes: data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/genes
+  events: data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/events
   database: data/external/human_rbp_unified/human_rbp.duckdb
   fasta: ../reference_documents/refdata-cellranger-arc-GRCh38-2024-A/fasta/genome.fa
   velocity_times: null
-  intron_counts: null
+  intron_counts: data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/regions
 assembly: hg38
-output: runs/GSE295932_Nontarget_cluster_RBFOX2_20261121
+output: runs/GSE295932_stimulated_v1_full
 runtime:
   python_binary: python
   threads: 24
@@ -55,17 +55,19 @@ clustering:
   enabled: false
 priors:
   targets: [ALL]
+  partner_hops: 1
+  extra_targets: []
 simulation:
-  target_sets: [[RBFOX2]]
+  target_sets: [[CELF2], [CWC27], [HNRNPD], [HNRNPLL], [PCBP2], [RBFOX2], [SFPQ], [SNRPD2], [SRRM1], [SRSF5], [SRSF9]]
   strengths: [0.0, 0.5, 1.0]
 ```
 
-以上展示主要运行字段，完整配置见 [人 Jurkat 配置](configs/gse295932_nontarget_hg38.yaml)和[小鼠配置](configs/nemo_p21_v0.3.yaml)。
+以上展示主要运行字段，完整配置见 [人 Jurkat 配置](configs/gse295932_stimulated_hg38.yaml)和[小鼠配置](configs/nemo_p21_v0.3.yaml)。
 
 - `execution.stages`：按顺序执行 prepare、fit、simulate。复用已拟合结果时设为 `[simulate]`。
 - `execution.event_limit`：`null` 拟合全部合格候选事件；正整数限制拟合事件数。
-- `execution.bootstrap`：WT 细胞在 stage×batch 内重采样，重拟合并运行级联的次数。
-- `runtime.threads`：BLAS、OpenMP、Numba 和 Scanpy 的线程预算。CytoTRACE R 进程数由 `ncores` 单独配置。
+- `execution.bootstrap`：WT 细胞在 branch×stage×batch 内重采样，重拟合并运行级联的次数。
+- `runtime.threads`：事件拟合和结构重建的进程预算；worker 内数值线程固定为 1，准备阶段使用配置线程。CytoTRACE R 进程数由 `ncores` 单独配置。
 - `priors.targets`：候选网络的起始因子；`[ALL]` 选择全部已表达剪接相关候选。
 - `simulation.target_sets`：每个内层列表定义一次干预；`[[DDX5], [DDX5, RBFOX2]]` 分别表示单独和联合扰动。
 - `simulation.strengths`：0=无扰动、0.5=降低一半、1=完全 KO。脚本执行靶点组合与强度的笛卡尔积。
@@ -75,9 +77,9 @@ prepare 和 fit 各执行一次，随后依次执行模拟。输出保存配置�
 原有分阶段 CLI 继续可用：
 
 ```bash
-splicefate prepare --config configs/gse295932_nontarget_hg38.yaml
-splicefate fit --config configs/gse295932_nontarget_hg38.yaml
-splicefate simulate --config configs/gse295932_nontarget_hg38.yaml --targets RBFOX2 --strength 1
+splicefate prepare --config configs/gse295932_stimulated_hg38.yaml
+splicefate fit --config configs/gse295932_stimulated_hg38.yaml
+splicefate simulate --config configs/gse295932_stimulated_hg38.yaml --targets RBFOX2 --strength 1
 ```
 
 ## 输入格式
@@ -112,14 +114,15 @@ splicefate simulate --config configs/gse295932_nontarget_hg38.yaml --targets RBF
 ```bash
 python scripts/download_gse295932.py
 python scripts/separate_gse295932_controls.py
-python scripts/convert_gse295932.py
-python scripts/quantify_gse295932_regions.py
+python scripts/convert_gse295932.py --condition stimulated
+python scripts/quantify_gse295932_regions.py --condition stimulated
+python scripts/project_gse295932_ko_truth.py --condition stimulated
 python scripts/build_human_model_priors.py
 ```
 
 下载器使用 `test/GSE295932/metadata/` 中的 GEO 文件清单与样本元数据。数据来源见 [GEO GSE295932](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE295932)及[论文](https://doi.org/10.1038/s41467-025-60902-2)。
 
-当前训练输入为全转录组 Nontarget 对照：未刺激 387、刺激后 662，共 1,049 个细胞。刺激条件保留独立轨迹上下文。
+主配置使用刺激态 662 个全转录组 Nontarget WT 细胞独立建模。`--condition unstimulated` 可独立转换未刺激 387 个 WT；`--condition both` 保留原合并转换方式。
 
 | 字段 | 单位 | 当前选择 |
 |---|---|---|
@@ -127,9 +130,9 @@ python scripts/build_human_model_priors.py
 | `cluster` | 校正结构对应的整数 UMI 簇，散射／小簇过滤前 | **G、链、事件共同使用** |
 | `count` | 过滤后的加权计数，可为分数 | 历史版本比较 |
 
-当前整数版有 16,699 个基因、217,053 条剪接链、28,266 个事件和 60,040 个分支。G 总数 5,686,581，HVG 按当前 G 重新计算。cluster 保留过滤前的小簇，其噪声差异在与加权版的比较中记录。
+刺激态整数版有 16,097 个基因、156,406 条剪接链、19,171 个事件和 40,756 个分支。G 总数 3,599,481，3,000 HVG 按该条件的 G 独立选择。cluster 保留过滤前的小簇，其噪声差异在与加权版的比较中记录。
 
-输出目录为 `data/processed/GSE295932_Nontarget_hg38_cluster_20261121/`。来源、字段选择、坐标核验和两版比较见 [开发记录](docs/GSE295932_COUNT_SELECTION_20261121.md)。历史分数模式可通过 `model.count_unit: author_fractional_umi_estimates` 和配套 quantification 记录启用，对应 gamma 扩展 DM 目标。
+刺激态输出目录为 `data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/`；原合并目录保留。来源、字段选择、坐标核验和两版比较见 [开发记录](docs/GSE295932_COUNT_SELECTION_20261121.md)。历史分数模式可通过 `model.count_unit: author_fractional_umi_estimates` 和配套 quantification 记录启用，对应 gamma 扩展 DM 目标。
 
 ## 小鼠 AllInfo＋MEX 转换
 
@@ -147,7 +150,7 @@ NEMO P21 转换产物包括 35,317 个细胞、31,053 个基因、3,000 HVG、14
 2. **CytoTRACE→DPT**：每个上下文使用完整基因计数运行官方 CytoTRACE 0.3.1，最高有效分细胞作为起点；已知多阶段时在最早阶段内选择。评分同分按 cell ID 排序。
 3. **S 局部校准**：DPT 为初始轴，以可靠 E/I 相位或剪接组成约束做局部小幅修正。全部事件使用同一份时间；缺少 S 校准输入时使用原 DPT。
 4. **候选关系**：从同物种 motif、CLIP、PPI 与复合体生成直接及伙伴介导的事件候选，并保存证据来源。
-5. **先学习网络、再筛选输入**：对全部有先验证据的候选 RBP–事件关系逐条拟合条件 DM 响应，包含 RBP 总表达及可用的自身局部组成。完整单关系网络保存后，按拟合增益、WT 重采样稳定性及响应变化幅度综合评分，为每个事件选择最多 5 个因子，再联合拟合阶段、批次、轨迹背景、总表达、交互与组成项。
+5. **先学习网络、再筛选输入**：对全部有先验证据的候选 RBP–事件关系逐条拟合条件 DM 响应，包含 RBP 总表达及可用的自身局部组成。完整单关系网络保存后，按袋外拟合增益、袋外响应稳定性及响应变化幅度综合评分，为每个事件选择最多 5 个因子，再联合拟合阶段、批次、轨迹背景、总表达、交互与组成项。
 6. **虚拟扰动**：在表达原单位上乘以 `(1-q)`，转换回 log1p 后计算相对 WT 的响应差分。联合干预同时求值。
 7. **组成级联**：预测改变 RBP 自身剪接状态后，同步更新其组成输入，再由冻结的响应模型计算下一轮。
 8. **结构输出**：将最终事件响应约束到实际观测链的概率 simplex，记录组成、保留结构比例及优化状态。
@@ -160,7 +163,9 @@ model:
   network_selection:
     method: all_single_relations_then_weighted_quality
     min_response_score: 0.0
-    min_fit_gain: 0.0
+    min_oob_fit_gain: 0.0
+    min_positive_gain_fraction: 0.6
+    min_stability: 0.3
     bootstrap_repeats: 10
     bootstrap_seed: 42
     weights:
@@ -169,7 +174,7 @@ model:
       response: 0.10
 ```
 
-`max_factors` 限制最终联合模型的输入数。完整单关系学习覆盖所有候选，沿用 CausalBridge 的“单关系学习→评分→组合拟合”顺序。默认拟合增益与稳定性各占 45%，响应变化幅度占 10%；权重用于三项评分归一化加权。网络筛选的 `bootstrap_repeats` 控制 WT 内重采样拟合，`execution.bootstrap` 单独控制最终扰动区间。全部 WT 细胞参与拟合，重采样不设测试细胞。完整定义及保存格式见[网络学习说明](docs/REGULATORY_NETWORK_LEARNING_20261121.md)。
+`max_factors` 限制最终联合模型的输入数。完整单关系学习覆盖所有候选，沿用 CausalBridge 的“单关系学习→评分→组合拟合”顺序。默认袋外拟合增益与稳定性各占 45%，响应变化幅度占 10%；权重用于三项评分归一化加权。网络筛选的 `bootstrap_repeats` 控制 WT 内重采样拟合，`execution.bootstrap` 单独控制最终扰动区间。全部 WT 细胞用于最终拟合；网络筛选每次在重采样袋内拟合、袋外评估。未达质量门槛的事件允许少于 5 个输入。完整定义及保存格式见[网络学习说明](docs/REGULATORY_NETWORK_LEARNING_20261121.md)。
 
 ## 异构体组成和多轮传播
 
@@ -192,7 +197,7 @@ model:
 
 组成项按实际观测门控：未观测到上游状态的细胞使用总表达响应；联合支持用于确定组成项的可拟合性。因子自身事件的预测使用其他输入，避免将目标分支直接作为自身预测变量。这个规则只作用于响应模型，伪时间使用共享全部特征。
 
-每轮相对同一 WT 基线重新求值，直接靶点持续保持指定剂量。组成更新仅用于有来源观测的细胞。达到轮数预算或输入变化阈值后停止；轮数表示传播层次。开启 bootstrap 时，对 WT 重采样重拟合并重新执行整条级联。
+每轮相对同一 WT 基线重新求值，直接靶点持续保持指定剂量。组成更新仅用于有来源观测的细胞，以 `(C+s×pooled)/(N+s)` 平滑低计数基线；零变化精确返回原输入。达到轮数预算、收敛阈值或发散上限后停止；轮数表示传播层次。开启 bootstrap 时，对 WT 重采样重拟合并重新执行整条级联。
 
 ## S 校准输入
 
@@ -202,7 +207,7 @@ model:
 
 GSE295932 的 E/I 区域计数由 `scripts/quantify_gse295932_regions.py` 从作者原始结构表的整数 `cluster` 列量化，保存在当前转换目录的 `regions/`。E 为覆盖外显子区域的簇数，I 为连续比对块覆盖严格内含子区域的簇数，同一簇可同时贡献 E 和 I。计数定义、覆盖统计及校准检查见 [E/I 区域量化记录](docs/GSE295932_REGION_QUANTIFICATION_20261124.md)。
 
-将 `input.intron_counts` 设为 `data/processed/GSE295932_Nontarget_hg38_cluster_20261121/regions` 可启用当前 `intron_phase` 校准。默认配置仍保留 `null`；本次量化与校准检查使用独立输出目录。NEMO 的独立 E/I 矩阵尚未量化。AllInfo 的 intron chain 是已切除的缺口，区域计数读取比对块覆盖。`intron_counts: null` 时使用 CytoTRACE 定向的 G-only DPT。
+刺激态主配置已将 `input.intron_counts` 指向 `data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/regions`，启用 `intron_phase` 校准。原合并配置保留。NEMO 的独立 E/I 矩阵尚未量化。AllInfo 的 intron chain 是已切除的缺口，区域计数读取比对块覆盖。`intron_counts: null` 时使用 CytoTRACE 定向的 G-only DPT。
 
 可选完整动力学比较接口 `splicefate.velocity` 使用经分类核验的 gene-level spliced/unspliced 整数层，输出 `cell`、`latent_time`、`qc_pass`；路径写入 `input.velocity_times`。
 
@@ -230,21 +235,42 @@ python scripts/finish_mouse_protein_dimensions.py
 | `provenance.json` | 输入、代码和准备产物校验值 |
 | `cells.tsv`、`trajectory_diagnostics.json` | 细胞元数据、CytoTRACE、起点与 DPT/GS 时间 |
 | `prepared_arrays.npz` | 全事件共享的一维时间、PCA 和因子输入 |
-| `priors.json` | 因子轴、锚点、伙伴路径和局部组成状态 |
-| `models.json`、`fit_summary.json` | 拟合模型与统计 |
+| `priors_meta.json`、`priors.duckdb` | 因子轴、局部组成状态、规范化锚点与伙伴证据 |
+| `models.duckdb`、`model_arrays.npz`、`fit_summary.json` | 联合模型、内存映射预测／支持数组与统计 |
+| `structures_meta.json`、`structure_counts.npz` | 剪接链映射与稀疏计数 |
 | `regulatory_network.duckdb` | 全部单关系的拟合曲线、证据、拟合增益、重采样稳定性、综合得分及筛选结果 |
 | `regulatory_network.tsv.gz`、`regulatory_network.summary.json` | 完整关系表与网络统计 |
 | `isoform_response_weights.tsv` | 上游组成对下游事件的响应系数及联合支持 |
 | `all_event_status.tsv`、`fit_diagnostics.tsv` | 事件计数、拟合与支持诊断 |
-| `simulations/*/events.tsv.gz` | 各细胞分支概率及变化 |
+| `simulations/*/events.tsv.gz` | 受影响事件的细胞分支概率、表达／直接组成／级联贡献 |
+| `simulations/*/event_stage_summary.tsv` | 全事件关系状态及分子加权／观测细胞／全细胞汇总 |
 | `simulations/*/chains.tsv.gz` | 各细胞剪接链比例及变化 |
 | `simulations/*/structure_diagnostics.tsv` | 结构约束、冲突和优化状态 |
 | `simulations/*/simulation.json` | 传播历史和停止原因 |
+
+## 续跑与外部评测
+
+网络每完成一个事件即提交事务。运行中断后将 `execution.stages` 设为 `[fit, simulate]` 并重新启动；配置、输入、代码及事件范围指纹一致时跳过已完成的单关系事件。联合模型重新生成。
+
+`--check` 会实际验证 Rscript、Matrix、HiClimR、ccaPP、nnls 及官方 CytoTRACE 源码校验值。
+
+`simulation.write_unchanged_cells: false` 控制细胞表体积；设置 `true` 可保存全部已拟合事件。全事件汇总始终保存，`target_relation_status` 区分 `modeled_direct`、`modeled_cascade_only`、`not_selected_by_quality`、`no_prior_path`、`event_unmodeled`；未建模概率记为缺失。
+
+```bash
+splicefate evaluate \
+  --prediction runs/GSE295932_stimulated_v1_full/simulations/RBFOX2_q1/event_stage_summary.tsv \
+  --truth data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/external_KO_truth/ko_truth.tsv \
+  --metric delta_probability_molecule_weighted \
+  --output runs/GSE295932_stimulated_v1_full/RBFOX2_metrics.json
+```
+
+可选指标还有 `delta_probability_observed_cells`、`delta_probability_all_cells`。真实 KO 投影使用相同条件的官方 barcode 标签及固定 WT 锚点／分支；BUB3 和 VIM 分别输出覆盖及阴性对照审计。
 
 ## 开发记录和参考
 
 - [GSE295932 计数选择](docs/GSE295932_COUNT_SELECTION_20261121.md)
 - [模型实现](docs/IMPLEMENTATION_v0.3.md)
+- [全量运行改造验证](docs/FULL_RUN_REDESIGN_VALIDATION_20261125.md)
 - [伪时间与级联设计](docs/SPLICEFATE_PSEUDOTIME_AND_CASCADE_v0.3.md)
 - [CausalBridge](https://github.com/Senki-zip/CausalBridge_en)：候选路径与冻结 WT 差分参考。
 - [CytoTRACE](https://doi.org/10.1126/science.aax0249)：DPT 起点评分。

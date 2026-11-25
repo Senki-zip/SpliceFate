@@ -1,0 +1,141 @@
+# Stimulated WT only (GSM8961554); integer author UMI-cluster counts.
+project_root: ..
+input:
+  genes: data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/genes
+  events: data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/events
+  database: data/external/human_rbp_unified/human_rbp.duckdb
+  fasta: ../reference_documents/refdata-cellranger-arc-GRCh38-2024-A/fasta/genome.fa
+  velocity_times: null
+  intron_counts: data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/regions
+assembly: hg38
+output: runs/GSE295932_stimulated_v1_full
+runtime:
+  python_binary: python
+  threads: 24
+execution:
+  stages:
+  - prepare
+  - fit
+  - simulate
+  event_limit: null
+  bootstrap: 0
+normalization:
+  target_sum: 100000
+  hvg_count: 3000
+  hvg_method: existing_seurat_v3_axis
+clustering:
+  enabled: false
+  cluster_key: leiden
+  n_neighbors: 20
+  n_pcs: 20
+  resolution: 0.5
+  random_state: 42
+  min_cells_per_cluster: 50
+  fallback_pseudotime_method: dpt
+  paga:
+    enabled: false
+    connectivity_threshold: 0.08
+    min_cells_per_lineage: 50
+trajectory:
+  S_calibration: intron_phase
+  intron_phase:
+    weight: 0.25
+    reference_quantile: 0.7
+    min_gene_cells: 8
+    min_region_counts: 20
+    count_shrinkage: 5.0
+    min_shared_genes: 5
+    reliability_genes: 20
+  method: dpt
+  root_cell: null
+  root_method: cytotrace
+  cytotrace:
+    source_dir: tools/CytoTRACE_official
+    rscript_binary: Rscript
+    seed: 42
+    enable_fast: true
+    ncores: 1
+    subsample_size: 1000
+  isolate_stages:
+  - stimulated
+  splice_weight: 0.25
+  velocity_weight: 0.25
+  prior_strength: 2.0
+  min_shared_events: 10
+  reliability_events: 50
+  min_component_cells: 5
+priors:
+  targets:
+  - ALL
+  include_family_shared: true
+  max_partners_per_factor: 8
+  min_experiment_score: 400
+  allow_unspecified_association: false
+  window_bp: 100
+  motif_pvalue: 0.0001
+  min_event_cells: 8
+  min_event_molecules: 20
+  partner_hops: 1
+  extra_targets: []
+model:
+  response: spline
+  spline_knots: 3
+  state_ridge: 1.0
+  ridge: 10.0
+  interaction_ridge: 30.0
+  dm_concentration: 20.0
+  max_factors: 5
+  network_selection:
+    method: all_single_relations_then_weighted_quality
+    min_response_score: 0.0
+    bootstrap_repeats: 10
+    bootstrap_seed: 42
+    weights:
+      fit_gain: 0.45
+      stability: 0.45
+      response: 0.1
+    min_oob_fit_gain: 0.0
+    min_positive_gain_fraction: 0.6
+    min_stability: 0.3
+  max_interactions: 2
+  state_dependent: true
+  isoform_state:
+    enabled: true
+    max_events_per_factor: 1
+    max_branches: 4
+    min_branch_molecules: 20
+    min_branch_cells: 10
+    min_joint_cells: 20
+    count_shrinkage: 2.0
+    ridge: 10.0
+  max_iterations: 400
+  collinearity_threshold: 0.95
+  support_neighbors: 10
+  support_distance_quantile: 0.95
+  min_conditional_residual_sd: 0.02
+  count_unit: integer_umi
+  max_event_branches: 8
+simulation:
+  target_sets:
+  - - CELF2
+  - - CWC27
+  - - HNRNPD
+  - - HNRNPLL
+  - - PCBP2
+  - - RBFOX2
+  - - SFPQ
+  - - SNRPD2
+  - - SRRM1
+  - - SRSF5
+  - - SRSF9
+  strengths:
+  - 0.0
+  - 0.5
+  - 1.0
+  max_rounds: 3
+  convergence_tolerance: 1.0e-06
+  divergence_limit: 10.0
+  max_chain_states: 128
+  structure_lambda: 10.0
+  structure_prior_strength: 1.0
+  write_unchanged_cells: false

@@ -1,6 +1,3 @@
-# Converted GSE295932: 1,049 full-transcriptome Nontarget control cells.
-# Human hg38 reference and native human RBP prior database; no KO cells in training.
-# G and S use integer author cluster counts, before scatter/small-cluster filtering.
 project_root: ..
 input:
   genes: data/processed/GSE295932_Nontarget_hg38_cluster_20261121/genes
@@ -78,6 +75,8 @@ priors:
   motif_pvalue: 0.0001
   min_event_cells: 8
   min_event_molecules: 20
+  partner_hops: 1
+  extra_targets: []
 model:
   response: spline
   spline_knots: 3
@@ -89,13 +88,15 @@ model:
   network_selection:
     method: all_single_relations_then_weighted_quality
     min_response_score: 0.0
-    min_fit_gain: 0.0
     bootstrap_repeats: 10
     bootstrap_seed: 42
     weights:
       fit_gain: 0.45
       stability: 0.45
-      response: 0.10
+      response: 0.1
+    min_oob_fit_gain: 0.0
+    min_positive_gain_fraction: 0.6
+    min_stability: 0.3
   max_interactions: 2
   state_dependent: true
   isoform_state:
@@ -113,6 +114,7 @@ model:
   support_distance_quantile: 0.95
   min_conditional_residual_sd: 0.02
   count_unit: integer_umi
+  max_event_branches: 8
 simulation:
   target_sets:
   - - RBFOX2
@@ -126,4 +128,4 @@ simulation:
   max_chain_states: 128
   structure_lambda: 10.0
   structure_prior_strength: 1.0
-  gene_limit: null
+  write_unchanged_cells: false

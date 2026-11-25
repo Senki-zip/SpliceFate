@@ -50,7 +50,21 @@ def import_source(db,path,gsm):
         'zero_weighted_count_rows_with_positive_cluster':db.execute('SELECT count(*) FROM raw WHERE count=0 AND cluster>0').fetchone()[0]}
 
 
-def convert(source,output,gtf):
+SAMPLES = [('GSM8961552','GSM8961552_FT_sc_iso_count.Nontarget.txt.gz','unstimulated'),
+           ('GSM8961554','GSM8961554_FT_stim_sc_iso_count.Nontarget.txt.gz','stimulated')]
+
+
+def condition_samples(condition):
+    if condition not in ('stimulated','unstimulated','both'):
+        raise ValueError('Unknown condition: '+condition)
+    return [row for row in SAMPLES if condition=='both' or row[2]==condition]
+
+
+def condition_output(condition):
+    return DEFAULT_OUTPUT if condition=='both' else PROJECT/f'data/processed/GSE295932_Nontarget_{condition}_hg38_cluster'
+
+
+def convert(source,output,gtf,condition='both'):
     output.mkdir(parents=True,exist_ok=True)
     if (output/'conversion_status.json').exists() and json.loads((output/'conversion_status.json').read_text()).get('status')=='complete':
         raise FileExistsError('Complete conversion already exists; preserving it')
@@ -62,18 +76,17 @@ def convert(source,output,gtf):
     audits=[];sources=[]
     db.execute('CREATE OR REPLACE TABLE observations(sample VARCHAR,cell VARCHAR,gene VARCHAR,isoform VARCHAR,count BIGINT)')
     frames=[]
-    for gsm,name,condition in [('GSM8961552','GSM8961552_FT_sc_iso_count.Nontarget.txt.gz','unstimulated'),
-                               ('GSM8961554','GSM8961554_FT_stim_sc_iso_count.Nontarget.txt.gz','stimulated')]:
+    for gsm,name,sample_condition in condition_samples(condition):
         folder=source/'WT/Nontarget_controls'/gsm;path=folder/name
         axis=pd.read_csv(folder/'cells.tsv',sep='\t',dtype=str)
         frames.append(pd.DataFrame({'cell':gsm+':'+axis.barcode,'barcode':axis.barcode,
-            'sample_id':gsm,'batch':gsm,'stage':condition,'stage_order':0,
+            'sample_id':gsm,'batch':gsm,'stage':sample_condition,'stage_order':0,
             'trajectory_direction_available':'false','perturbation':'Nontarget','species':'Homo_sapiens'}))
         audit=import_source(db,path,gsm)
         expected=set(axis.barcode)
         actual={x[0] for x in db.execute('SELECT DISTINCT cell FROM raw').fetchall()}
         if actual!=expected:raise ValueError('Control file cell axis differs from separated whitelist')
-        audits.append({**audit,'condition':condition,'cells':len(actual)})
+        audits.append({**audit,'condition':sample_condition,'cells':len(actual)})
         sources.extend([path,folder/'cells.tsv'])
     cells=pd.concat(frames,ignore_index=True);cell_index={s:i for i,s in enumerate(cells.cell)}
     found={x[0] for x in db.execute('SELECT DISTINCT gene FROM observations').fetchall()}
@@ -153,7 +166,7 @@ def convert(source,output,gtf):
         'normalization_denominator':'complete_longread_assigned_gene_UMI_cluster_sum; no paired shortread G matrix provided in GEO attachments',
         'limitations':'Author-clustered/corrected structures, not a raw per-UMI whitelist; pre-scatter-filter counts may include erroneous small clusters'})
     sums=np.asarray(C.sum(0)).ravel();checks={
-        'all_1049_control_cells_preserved':len(cells)==1049,'unique_cells':cells.cell.is_unique,
+        'all_condition_control_cells_preserved':len(cells)==sum(a['cells'] for a in audits),'unique_cells':cells.cell.is_unique,
         'no_KO_or_targeted_WT_in_input':all(s['sample'] in ['GSM8961552','GSM8961554'] for s in audits),
         'G_integer':bool(np.issubdtype(G.dtype,np.integer)),
         'S_chain_integer':bool(np.issubdtype(I.dtype,np.integer)),
@@ -165,7 +178,7 @@ def convert(source,output,gtf):
         'events_nonempty':len(events)>0,'chain_ids_unique':len({r['isoform'] for r in chains})==len(chains),
         'event_ids_unique':len({e['event'] for e in events})==len(events),
         'event_weight_conservation':all(np.isclose(sums[offsets[i]:offsets[i+1]].sum(),e['total_UMIs']) for i,e in enumerate(events))}
-    report={'status':'complete','assembly':'hg38','cells':len(cells),'genes':len(genes),'chains':len(chains),'events':len(events),
+    report={'status':'complete','assembly':'hg38','condition':condition,'cells':len(cells),'genes':len(genes),'chains':len(chains),'events':len(events),
         'branches':offsets[-1],'HVGs':int(hv.sum()),'samples':audits,'G_source':'author_longread_gene_UMI_totals',
         'S_count_unit':'integer_umi','source_count_field':'cluster',
         'counting_stage':'before_author_scatter_small_cluster_filter','QC':dict(qc),'reference_unresolved_genes':len(unknown),
@@ -184,9 +197,11 @@ def convert(source,output,gtf):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--source',type=Path,default=PROJECT/'test/GSE295932')
-    p.add_argument('--output',type=Path,default=DEFAULT_OUTPUT)
+    p.add_argument('--output',type=Path)
+    p.add_argument('--condition',choices=['stimulated','unstimulated','both'],default='both')
     p.add_argument('--gtf',type=Path,default=DEFAULT_GTF);args=p.parse_args()
-    try:convert(args.source,args.output,args.gtf)
+    args.output=args.output or condition_output(args.condition)
+    try:convert(args.source,args.output,args.gtf,args.condition)
     except BaseException as exc:
         # Preserve a previously completed output when refusing to overwrite it.
         status=args.output/'conversion_status.json'

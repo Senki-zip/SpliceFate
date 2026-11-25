@@ -1,52 +1,55 @@
-# 全量单关系学习与每事件前 5 个输入
+# 全量单关系学习与质量筛选
 
-更新日期：2026-11-24。
+更新日期：2026-11-25。
 
-流程为：先验候选网络 → 全部单关系拟合与 WT 重采样 → 增益／稳定性／幅度综合评分 → 每事件最多 5 个输入 → 联合拟合 → 扰动模拟。
+流程：先验候选 → 全部单关系学习与袋外评分 → 每事件最多 5 个输入 → 联合拟合 → 扰动模拟。学习顺序参考 [CausalBridge_en 的 fit_target / _wt_scores](https://github.com/Senki-zip/CausalBridge_en/blob/821c0314850fe12fde9d017d41c577bc4c7efd59/CausalBridge/saturating_hybrid.py)。
 
-## 学习顺序
+## 候选范围
 
-参考 [CausalBridge_en](https://github.com/Senki-zip/CausalBridge_en/blob/821c0314850fe12fde9d017d41c577bc4c7efd59/CausalBridge/saturating_hybrid.py) 的 `fit_target`、`_wt_scores`：先拟合所有单输入关系，再选择组合输入。SpliceFate 在响应幅度之外加入条件计数拟合增益与 WT 重采样稳定性，默认分别占 45%、45%、10%。这组比例为可配置的初始工程权重。
+`priors.targets: [ALL]` 从所有已表达剪接因子出发，按 `partner_hops: 1` 检索物理互作和同复合体伙伴。`extra_targets` 显式追加种子。检索跳数与 `simulation.max_rounds` 独立。
 
-SpliceFate 的第一遍处理遍历全部候选 RBP–事件关系。每条关系使用全部 WT 细胞，计数目标由该事件有观测的细胞提供；输入保留状态背景、单个 RBP 总表达及有支持的自身局部组成。自身组成输入使用原有公共锚点规则，目标基因的同一组成信息从自身预测输入中排除。
+直接关系需要事件窗口内 motif 或 CLIP 锚点。伙伴关系需要伙伴在该窗口内的直接锚点，以及 recipient–partner 的物理互作或同复合体证据。来源证据分别保存于 `priors.duckdb` 的 `pair_evidence`、`event_anchors`、`event_candidates`；候选读取按事件进行。
 
-所有单关系保存完成后进入第二遍处理，按学习得分为每个事件选择最多 5 个因子，联合拟合原有条件 DM 模型。先验的 seed、CLIP/motif/伙伴类型及 ID 顺序保存在证据中，入选顺序由 WT 学习得分决定；完全相同的得分按稳定因子 ID 排序。
+## 完整与嵌套模型
 
-`priors.targets: [ALL]` 定义全表达候选网络的起始集合。`simulation.target_sets` 定义后续查询靶点，两者分别用于网络构建和扰动。
+单关系完整模型使用状态背景、一个 RBP 的总表达及有支持的自身局部剪接组成；预测目标基因时排除该基因的组成输入。嵌套参照保留相同状态列和源组成观测门控，移除表达、组成作用项。二者使用相同计数、细胞、固定浓度 `20.0` 和已冻结的 WT 设计基。
 
-## 拟合增益与稳定性
+设计基只在目标事件有观测的 `good` 细胞上估计：表达尺度、样条节点、中心化和正交投影均固定。状态基去除完全共线列，时间在轨迹上下文内部标准化。唯一因子在观测细胞内无变异时记录 `constant_input_on_observed_cells`。分支数超过 8 的事件记录 `too_many_branches_unmodeled`。
 
-每条关系先拟合原有条件 DM 响应，再拟合嵌套参照：保留同一状态设计列、相同的源组成观测门控列，移除 RBP 表达和组成效应。两者使用相同的事件观测细胞、计数和固定 DM concentration。拟合增益为每个观测细胞的未加正则惩罚 DM log likelihood 差的均值，省略项均为相同的参数无关计数常数。
+## 袋外增益与稳定性
 
-稳定性使用 WT 内 `branch × stage × batch` 分层有放回重采样，默认 10 次。每次保留原层的观测细胞数，在固定 WT 特征尺度、样条基和组成门控下，重新拟合完整关系和嵌套参照的全部系数。将两模型重新求值到共同的原 WT 观测细胞，得到 bootstrap 拟合增益和 `p_full-p_reference` 响应向量。每次分数为：增益超过 `min_fit_gain` 时取该向量与全 WT 响应向量的正向余弦一致性，否则取 0；数值拟合失败也贡献 0。稳定性取全部请求重采样的平均，范围为 0～1。
+全部 WT 细胞用于最终模型拟合，无固定测试细胞集。网络筛选另外进行默认 10 次 `branch × stage × batch` 分层有放回重采样，各候选共用同一事件的样本。
 
-该指标衡量固定 WT 表示下的拟合重现性，所有 WT 细胞用于最终拟合与比较。网络拓扑、先验和伪时间在此步骤固定。分层重采样在候选间共用，随机种子由配置和稳定事件 ID 决定。
+每次完整、嵌套模型在袋内拟合，只在未抽中的袋外细胞评估：
 
-## WT 响应幅度
+- `oob_gain_b = mean(ll_full(C_oob, p_boot_oob) - ll_reduced(C_oob, p0_boot_oob))`，使用未加正则惩罚的 DM log likelihood。
+- `agreement_b` 为全 WT 拟合的 `p_full-p_reduced` 与该次重拟合的响应向量在相同袋外行的正向余弦一致性。
+- 增益超过 `min_oob_fit_gain` 时，该次稳定性取 `agreement_b`，否则取 0。
+- 空袋外集和拟合失败记录原因，稳定性和正增益比例的分母仍为请求次数。
 
-对关系 r→e，先计算每个细胞的单关系分支概率 `p_i`。然后固定 r 的 log1p 归一化表达输入为该事件观测细胞的 WT 均值，将 r 的中心化组成对比设为零，保留细胞原有状态和观测门控，得到参照概率 `p_ref_i`。差值 `d_i = p_i - p_ref_i` 表示拟合的因子响应。
+`oob_fit_gain` 是有效袋外拟合增益均值；`oob_positive_gain_fraction` 是超过增益门槛的次数除以请求次数；`stability` 是上述稳定性在请求次数上的均值。`fit_gain` 另保留全 WT 样本内增益作审计。尺度、样条、先验和伪时间在此步骤固定。
 
-在每个 `branch × stage × batch` 中，按共享伪时间、cell ID 排序。伪时间递增的相邻细胞形成比较对；只在两端均有事件计数时累加 `0.5 × sum_k |d_jk-d_ik|`，最终除以这些上下文中全部可比较相邻对的数量。缺失事件观测保留原位置，分母在同一事件的所有候选间一致。
+没有组成观测门控的候选共用同一事件的 state-only 全 WT 基线及重采样基线。带门控的候选按相同嵌套设计缓存基线；缓存不改变数值。
 
-此处将 CausalBridge 标量响应的相邻绝对变化扩展为多分支概率的总变差，并通过配对参照分离状态背景。相同时间、跨上下文、跨阶段和跨批次的细胞分别处理。
+## 响应幅度与最终筛选
 
-## 综合评分与筛选
+将 RBP 表达固定到观测 WT 均值、中心化组成对比置零，得到状态条件参照。完整概率减去该参照概率构成因子响应。各 `branch × stage × batch` 内按时间和 cell ID 排序，时间严格递增、两端均观测的相邻细胞累加响应差的总变差；分母使用全部时间递增相邻对，缺失位置不跨越。
 
-拟合成功、嵌套参照可用、拟合增益超过 `min_fit_gain`、响应幅度超过 `min_response_score` 且稳定性大于 0 的关系参与排序；两个阈值默认均为 0。在同一事件合格候选内，将增益和响应幅度分别除以对应最大值。稳定性直接使用其 0～1 值。
+入选资格：完整与嵌套拟合成功，`oob_fit_gain > 0`、`oob_positive_gain_fraction >= 0.6`、`stability >= 0.3`、响应幅度 `> 0`。阈值均在 `model.network_selection` 中配置。
 
-`selection_score = 0.45 × normalized_fit_gain + 0.45 × stability + 0.10 × normalized_response`
+合格候选的袋外增益和幅度各除以同事件合格候选最大值：
 
-权重写入 `model.network_selection.weights`；按配置权重总和归一化。联合模型保留综合得分前 `max_factors` 个，默认最多 5 个。已有互作项在入选因子内按两端综合得分排序，预算由 `max_interactions` 控制。未满足质量条件的关系保留在完整网络记录中，三项原始评分分别输出。
+`selection_score = (0.45 × normalized_oob_gain + 0.45 × stability + 0.10 × normalized_response) / sum(weights)`
 
-配置方法为 `all_single_relations_then_weighted_quality`；`bootstrap_repeats` 和 `bootstrap_seed` 控制网络选择重采样，独立于 `execution.bootstrap` 的最终扰动区间重采样。修改评分配置时使用新输出目录重新拟合。
+按综合分降序、factor ID 升序选择至多 `max_factors: 5` 个，允许 0～4 个。互作项只在入选因子内按两端质量得分排序，受 `max_interactions` 预算限制。本轮不做复合体小组救援。
 
-## 输出
+## 并行、续跑与产物
 
-- `regulatory_network.duckdb`：`single_relations` 保存每条候选的事件、因子、拟合状态、响应幅度、支持比较对数、单关系曲线、来源证据、入选排名和标记；质量字段包括 `quality_status`、`fit_gain`、`stability`、`bootstrap_successes`、`bootstrap_positive_gain_fraction`、`bootstrap_effect_agreement`、`bootstrap_gain_mean`、`normalized_fit_gain`、`normalized_response`、`selection_score`。`quality_json` 另保存基线 likelihood，`network_metadata` 保存评分权重及重采样配置。
-- `regulatory_network.tsv.gz`：导出全部关系及筛选结果，含未入选关系与拟合失败状态。
-- `regulatory_network.summary.json`：候选、成功拟合、正得分、入选关系和状态计数。
-- `models.json`：最多 5 因子的最终联合响应模型，用于扰动和组成级联。
+`runtime.threads` 控制按事件多进程预算，数值 worker 内 BLAS/Numba 限为单线程。主进程独占网络写连接，事件关系与 `completed_events` 标记在同一事务提交。重启时先核对输入、代码、模型配置和事件范围指纹，跳过已完成事件，全部完成后统一排序。
 
-单关系曲线保存系数、设计基和拟合诊断；细胞级输入统一从准备阶段产物读取。`WT_weight` 是同事件合格关系综合得分的归一化值，用于网络解释，最终扰动使用重新联合拟合的响应函数。`execution.bootstrap` 固定本次 WT 选择的网络输入，并重拟合联合模型和组成级联。
+- `regulatory_network.duckdb`：全部候选的拟合状态、紧凑系数、样本内与袋外增益、稳定性、重采样审计、排名和入选标记。
+- `regulatory_network.tsv.gz`：仅结构化标识、数值和状态列，包含未入选及失败关系。
+- `regulatory_network.summary.json`：候选、拟合、质量合格和入选数量。
+- `models.duckdb` 与 `model_arrays.npz`：最终联合模型；预测和支持矩阵按事件偏移量读取。
 
-全量执行配置为 `execution.event_limit: null`。小规模检查可限制事件数量；每个被检查事件的全部候选关系仍先完成学习。线程、归一化、HVG、模型正则化及 E/I 输入设置沿用原配置。
+`WT_weight` 是同一事件合格候选综合分的归一化值。扰动使用重新联合拟合的响应函数。`execution.bootstrap` 单独控制最终扰动区间，固定本次选择的输入网络，按事件收集成功的联合重拟合与级联结果。

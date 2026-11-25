@@ -58,7 +58,7 @@ def event_windows(event,width):
     return result
 
 
-def build_priors(data,c):
+def build_priors(data,c,output=None):
     db=duckdb.connect(c['input']['database'],read_only=True)
     db.execute("SET file_search_path='"+str(Path(c['input']['database']).parent).replace("'","''")+"'")
     assembly=c['assembly'];species='Homo_sapiens' if assembly=='hg38' else 'Mus_musculus'
@@ -71,6 +71,7 @@ def build_priors(data,c):
     factors={f:(g,s) for f,g,s in db.execute('SELECT factor_id,gene_id,gene_symbol FROM factors').fetchall()}
     available=set(data['genes'].gene);expressed=set(data['genes'].gene[np.asarray(data['G'].sum(0)).ravel()>0])
     targets=c['priors']['targets'];all_targets=targets==['ALL']
+    extra=c['priors'].get('extra_targets',[])
     if all_targets:
         seeds=sorted({identities.get(f,f) for (f,) in db.execute('SELECT factor_id FROM candidate_splicing_factors').fetchall()
                       if factors[identities.get(f,f)][0] in expressed})
@@ -84,6 +85,13 @@ def build_priors(data,c):
             fid=next(iter(hits))
             if factors[fid][0] not in expressed:raise ValueError(f'Target {target} absent/unexpressed in full gene input')
             seeds.append(fid)
+    for target in extra:
+        hits={identities.get(f,f) for f,g,s in db.execute("SELECT factor_id,gene_id,gene_symbol FROM factors WHERE upper(gene_symbol)=upper(?) OR gene_id=? OR factor_id=?",[target,target,target]).fetchall()}
+        if len(hits)!=1:raise ValueError('Extra target does not resolve uniquely: '+target)
+        fid=next(iter(hits))
+        if factors[fid][0] not in expressed:raise ValueError('Extra target not expressed: '+target)
+        seeds.append(fid)
+    seeds=sorted(set(seeds))
     # Keep evidence per source. No arbitrary multi-hop diffusion or motif inheritance via PPI.
     pair_evidence=collections.defaultdict(list)
     for a,b,source,rel,eid,score,construct,condition in db.execute('''SELECT factor_a,factor_b,source,relation_type,evidence_id,
@@ -112,13 +120,12 @@ def build_priors(data,c):
                 pair=tuple(sorted([a,b]));record={'source':source,'relation_type':'co_complex','complex_id':cid,'rank':1.5}
                 if record not in pair_evidence[pair]:pair_evidence[pair].append(record)
     selected_pairs={};universe=set(seeds);frontier=set(seeds);depth={f:0 for f in seeds}
-    # Candidate retrieval expands within the existing propagation budget. Only
-    # learned RNA-event responses transmit values during simulation.
+    # Candidate retrieval is independent of the learned composition propagation budget.
     adjacency=collections.defaultdict(list)
     for pair,ev in pair_evidence.items():
         item=(max(x['rank'] for x in ev),pair,ev)
         for f in pair:adjacency[f].append(item)
-    for layer in range(c['simulation']['max_rounds']):
+    for layer in range(c['priors'].get('partner_hops',1)):
         discovered=set()
         for factor in sorted(frontier):
             for _,pair,ev in sorted(adjacency[factor],key=lambda r:(-r[0],r[1]))[:c['priors']['max_partners_per_factor']]:
@@ -185,29 +192,46 @@ def build_priors(data,c):
                 f,tissue,assay,accession=exp[eid]
                 anchors[(e,f)].append({'type':'CLIP','assembly':assembly,'start0':start,'end0':stop,'experiment_id':eid,
                     'peak_id':pid,'tissue':tissue,'assay':assay,'accession':accession,'WT_review':'keyword_screen_only'})
-    candidates=collections.defaultdict(dict)
+    # Normalize evidence once; generate candidate rows one event at a time.
+    by_event=collections.defaultdict(dict)
     for (e,f),records in anchors.items():
-        # Same peak can overlap more than one event window; exact records are not independent support.
-        unique={json.dumps(r,sort_keys=True):r for r in records};records=list(unique.values())
-        candidates[e][f]={'factor_id':f,'gene_id':factors[f][0],'symbol':factors[f][1],
-            'route':'direct_anchor_candidate','anchors':records,'paths':[],
-            'priority':3 if any(r['type']=='CLIP' for r in records) else 2}
-    for pair,ev in selected_pairs.items():
-        a,b=pair
-        for e in eligible:
-            for recipient,partner in [(a,b),(b,a)]:
-                if (e,partner) not in anchors:continue
-                if recipient not in candidates[e]:candidates[e][recipient]={'factor_id':recipient,'gene_id':factors[recipient][0],
-                    'symbol':factors[recipient][1],'route':'indirect_partner_candidate','anchors':[],'paths':[],'priority':1}
-                candidates[e][recipient]['paths'].append({'partner_factor_id':partner,'relation_evidence':ev,
-                    'anchor_factor_id':partner,'anchor_count':len(anchors[e,partner]),'not_recipient_motif':True})
+        by_event[e][f]=list({json.dumps(r,sort_keys=True):r for r in records}.values())
+    del anchors
+    neighbors=collections.defaultdict(list)
+    for (a,b),ev in selected_pairs.items():
+        neighbors[a].append((b,ev));neighbors[b].append((a,ev))
+    from collections.abc import Mapping
+    class GeneratedEvents(Mapping):
+        def __len__(self):return len(by_event)
+        def __iter__(self):return (str(e) for e in sorted(by_event))
+        def __getitem__(self,key):
+            e=int(key)
+            if e not in by_event:raise KeyError(key)
+            candidates={}
+            for f,records in by_event[e].items():
+                candidates[f]={'factor_id':f,'gene_id':factors[f][0],'symbol':factors[f][1],
+                    'route':'direct_anchor_candidate','anchors':records,'paths':[],
+                    'priority':3 if any(r['type']=='CLIP' for r in records) else 2}
+            for partner,records in by_event[e].items():
+                for recipient,ev in neighbors[partner]:
+                    if recipient not in candidates:
+                        candidates[recipient]={'factor_id':recipient,'gene_id':factors[recipient][0],
+                            'symbol':factors[recipient][1],'route':'indirect_partner_candidate','anchors':[],'paths':[],'priority':1}
+                    candidates[recipient]['paths'].append({'partner_factor_id':partner,'relation_evidence':ev,
+                        'anchor_factor_id':partner,'anchor_count':len(records),'not_recipient_motif':True})
+            return list(candidates.values())
+    generated=GeneratedEvents()
     result={'factor_ids':factor_ids,'gene_ids':gids,'symbols':[factors[f][1] for f in factor_ids],
             'seed_factor_ids':seeds,'pairs':[{'members':list(k),'evidence':v} for k,v in selected_pairs.items()],
-            'events':{str(e):list(v.values()) for e,v in candidates.items()},
+            'events':generated if output is not None else dict(generated.items()),
             'eligible_events':eligible,'matrices_scanned':len(mat),'assembly':assembly,
             'motif_threshold_interpretation':'per-position per-motif under iid uniform background; not FDR',
             'source':'native '+assembly+' rescanning plus native CLIP',
             'RNA_expression_proxy_not_measured_activity':True,
-            'factor_retrieval_depth':depth,'candidate_retrieval_round_budget':c['simulation']['max_rounds']}
+            'factor_retrieval_depth':depth,'partner_hops':c['priors'].get('partner_hops',1)}
     db.close()
+    if output is not None:
+        from .storage import save_priors,load_priors
+        save_priors(output,result)
+        result=load_priors(output)
     return result,X

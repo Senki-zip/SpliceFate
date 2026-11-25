@@ -1,4 +1,3 @@
-# Converted P21 paired data; official CytoTRACE selects a DPT root per context.
 project_root: ..
 input:
   genes: data/processed/NEMO_P21_author_20261117/genes
@@ -13,8 +12,11 @@ runtime:
   python_binary: python
   threads: 24
 execution:
-  stages: [prepare, fit, simulate]
-  event_limit: null  # null: fit all eligible candidate events; integer: limited fit
+  stages:
+  - prepare
+  - fit
+  - simulate
+  event_limit: null
   bootstrap: 0
 normalization:
   target_sum: 100000
@@ -61,7 +63,8 @@ trajectory:
   reliability_events: 50
   min_component_cells: 5
 priors:
-  targets: [ALL]
+  targets:
+  - ALL
   include_family_shared: true
   max_partners_per_factor: 8
   min_experiment_score: 400
@@ -70,6 +73,8 @@ priors:
   motif_pvalue: 0.0001
   min_event_cells: 8
   min_event_molecules: 20
+  partner_hops: 1
+  extra_targets: []
 model:
   response: spline
   spline_knots: 3
@@ -81,13 +86,15 @@ model:
   network_selection:
     method: all_single_relations_then_weighted_quality
     min_response_score: 0.0
-    min_fit_gain: 0.0
     bootstrap_repeats: 10
     bootstrap_seed: 42
     weights:
       fit_gain: 0.45
       stability: 0.45
-      response: 0.10
+      response: 0.1
+    min_oob_fit_gain: 0.0
+    min_positive_gain_fraction: 0.6
+    min_stability: 0.3
   max_interactions: 2
   state_dependent: true
   isoform_state:
@@ -104,10 +111,10 @@ model:
   support_neighbors: 10
   support_distance_quantile: 0.95
   min_conditional_residual_sd: 0.02
+  max_event_branches: 8
 simulation:
-  # Each inner list is one intervention. A list with multiple genes is a joint KO.
   target_sets:
-  - [Rbfox2]
+  - - Rbfox2
   strengths:
   - 0.0
   - 0.5
@@ -118,4 +125,4 @@ simulation:
   max_chain_states: 128
   structure_lambda: 10.0
   structure_prior_strength: 1.0
-  gene_limit: null
+  write_unchanged_cells: false

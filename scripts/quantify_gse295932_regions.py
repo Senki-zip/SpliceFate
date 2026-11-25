@@ -14,12 +14,12 @@ from scipy import sparse
 
 from splicefate.io import digest, dump
 from splicefate.regions import reference_regions, classify_blocks
-from convert_gse295932 import parse_blocks, import_source
+from convert_gse295932 import parse_blocks, import_source, condition_samples, condition_output
 
 PROJECT = Path(__file__).resolve().parents[1]
 
 
-def quantify(source, converted, gtf, output):
+def quantify(source, converted, gtf, output, condition='both'):
     output.mkdir(parents=True, exist_ok=True)
     if (output/'quantification.json').exists():
         raise FileExistsError('Region quantification already exists: '+str(output))
@@ -33,8 +33,7 @@ def quantify(source, converted, gtf, output):
     db.execute('SET threads=4')
     db.execute('CREATE TABLE observations(sample VARCHAR,cell VARCHAR,gene VARCHAR,isoform VARCHAR,count BIGINT)')
     sources = []
-    for gsm, name in [('GSM8961552','GSM8961552_FT_sc_iso_count.Nontarget.txt.gz'),
-                      ('GSM8961554','GSM8961554_FT_stim_sc_iso_count.Nontarget.txt.gz')]:
+    for gsm, name, _ in condition_samples(condition):
         path = source/'WT/Nontarget_controls'/gsm/name
         print('Reading', gsm, flush=True)
         import_source(db, path, gsm)
@@ -137,8 +136,11 @@ def quantify(source, converted, gtf, output):
 if __name__=='__main__':
     p = argparse.ArgumentParser()
     p.add_argument('--source',type=Path,default=PROJECT/'test/GSE295932')
-    p.add_argument('--converted',type=Path,default=PROJECT/'data/processed/GSE295932_Nontarget_hg38_cluster_20261121')
+    p.add_argument('--processed-dir','--converted',dest='converted',type=Path)
+    p.add_argument('--condition',choices=['stimulated','unstimulated','both'],default='both')
     p.add_argument('--gtf',type=Path,default=PROJECT.parent/'reference_documents/refdata-cellranger-arc-GRCh38-2024-A/genes/genes.gtf.gz')
-    p.add_argument('--output',type=Path,default=PROJECT/'data/processed/GSE295932_Nontarget_hg38_cluster_20261121/regions')
+    p.add_argument('--output',type=Path)
     a=p.parse_args()
-    quantify(a.source.resolve(),a.converted.resolve(),a.gtf.resolve(),a.output.resolve())
+    a.converted=a.converted or condition_output(a.condition)
+    a.output=a.output or a.converted/'regions'
+    quantify(a.source.resolve(),a.converted.resolve(),a.gtf.resolve(),a.output.resolve(),a.condition)

@@ -89,6 +89,9 @@ def preflight(c,plan):
     from .cli import input_files
     missing=[str(p) for p in input_files(c) if not p.is_file()]
     if missing:raise FileNotFoundError('Missing input files:\n'+'\n'.join(missing))
+    if c['trajectory'].get('root_method')=='cytotrace':
+        from .cytotrace import check_runtime
+        check_runtime(c['trajectory']['cytotrace'])
     root=Path(c['output'])
     if 'prepare' in plan['stages'] and (root/'provenance.json').exists():
         raise FileExistsError('Prepared output already exists. Use a new output directory, or execution.stages: [simulate] / [fit, simulate]')
@@ -148,7 +151,7 @@ def run_pipeline(c,plan,launch_config=None,runtime_info=None):
 
 def main():
     parser=argparse.ArgumentParser(description='Run SpliceFate using paths, threads and KO scenarios from YAML')
-    parser.add_argument('--config',default=str(Path(__file__).resolve().parents[2]/'configs/gse295932_nontarget_hg38.yaml'))
+    parser.add_argument('--config',default=str(Path(__file__).resolve().parents[2]/'configs/gse295932_stimulated_hg38.yaml'))
     parser.add_argument('--check',action='store_true',help='Validate configuration and inputs, print plan; do not run or write outputs')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
     args=parser.parse_args()
@@ -164,7 +167,7 @@ def main():
     import scanpy as sc
     c=configuration(path);plan=execution_plan(c)
     threads=int(c.get('runtime',{}).get('threads',4));sc.settings.n_jobs=threads
-    model=model_configuration(c);preflight(model,plan)
+    model=model_configuration(c);model['_runtime_threads']=threads;preflight(model,plan)
     info={'configured_threads':threads,'numba_threads':get_num_threads(),
           'native_threadpools':threadpool_info(),'python_binary':sys.executable}
     print(json.dumps({'config':str(path),'runtime':info,'plan':plan},indent=2),flush=True)

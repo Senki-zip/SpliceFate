@@ -74,7 +74,7 @@ def validate_config(c):
     selection=selection_settings(c);c['model']['network_selection']=selection
     if selection['method']!=POLICY:
         raise ValueError('model.network_selection.method must be '+POLICY)
-    for key in ['min_response_score','min_fit_gain']:
+    for key in ['min_response_score','min_oob_fit_gain']:
         minimum=selection[key]
         if isinstance(minimum,bool) or not isinstance(minimum,(int,float)) or not np.isfinite(minimum) or minimum<0:
             raise ValueError('model.network_selection.'+key+' must be finite and nonnegative')
@@ -87,6 +87,25 @@ def validate_config(c):
         raise ValueError('network selection weights require fit_gain, stability and response')
     if any(isinstance(w,bool) or not isinstance(w,(int,float)) or not np.isfinite(w) or w<0 for w in weights.values()) or sum(weights.values())<=0:
         raise ValueError('network selection weights must be finite, nonnegative with positive sum')
+    for key in ['min_positive_gain_fraction','min_stability']:
+        v=selection[key]
+        if isinstance(v,bool) or not isinstance(v,(int,float)) or not np.isfinite(v) or not 0<=v<=1:
+            raise ValueError('model.network_selection.'+key+' must be within [0,1]')
+    for section,key,minimum,default in [('priors','partner_hops',0,1),('model','max_event_branches',2,8),('model','support_neighbors',1,10)]:
+        value=c[section].setdefault(key,default)
+        if isinstance(value,bool) or not isinstance(value,int) or value<minimum:
+            raise ValueError(section+'.'+key+' must be an integer >= '+str(minimum))
+    extras=c['priors'].setdefault('extra_targets',[])
+    if not isinstance(extras,list) or any(not isinstance(t,str) or not t.strip() for t in extras) or len(set(extras))!=len(extras):
+        raise ValueError('priors.extra_targets must contain unique identifiers')
+    if not isinstance(c['simulation'].setdefault('write_unchanged_cells',False),bool):
+        raise ValueError('simulation.write_unchanged_cells must be boolean')
+    if 'gene_limit' in c['simulation']:raise ValueError('simulation.gene_limit is retired; remove it')
+    for key in ['divergence_limit','convergence_tolerance']:
+        value=c['simulation'][key]
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not np.isfinite(value) or value<=0:
+            raise ValueError('simulation.'+key+' must be finite and positive')
+    if not 0<c['model']['support_distance_quantile']<=1:raise ValueError('Invalid support_distance_quantile')
     from .composition import settings
     iso=settings(c)
     for key in ['max_events_per_factor','min_branch_molecules','min_branch_cells','min_joint_cells','ridge','count_shrinkage']:
@@ -142,7 +161,8 @@ def load_data(c):
     order=ec.set_index('cell').loc[cells.cell].index
     rowmap=pd.Index(ec.cell).get_indexer(order)
     G=sparse.load_npz(gp/'gene_counts.npz').tocsr()
-    C=sparse.load_npz(ep/'branch_counts.npz').tocsr()[rowmap]
+    # Event operations slice columns; CSC avoids rescanning every cell library.
+    C=sparse.load_npz(ep/'branch_counts.npz').tocsr()[rowmap].tocsc()
     offsets=np.load(ep/'branch_offsets.npy')
     events=json.loads((ep/'groups.json').read_text())
     if G.shape != (len(cells),len(genes)) or C.shape[0]!=len(cells): raise ValueError('Count axes differ')
