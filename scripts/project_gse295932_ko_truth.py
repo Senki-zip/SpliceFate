@@ -88,7 +88,7 @@ def project(source,processed,output,condition='stimulated',min_cells=8,min_molec
         prior=load_priors(prior_dir);universe=set(prior['symbols'])
         ids={s:f for f,s in zip(prior['factor_ids'],prior['symbols'])}
         with duckdb.connect(str(prior_dir/'priors.duckdb'),read_only=True) as prior_db:
-            for target in ['BUB3','VIM']:
+            for target in targets:
                 prior_counts[target]=prior_db.execute('SELECT count(*) FROM event_candidates WHERE factor_id=?',[ids.get(target,'')]).fetchone()[0]
     rows=[]
     for target in targets:

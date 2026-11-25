@@ -92,13 +92,18 @@ def next_inputs(X,direct,event_wt,event_new,models,prior,c=None):
         delta=np.log(np.maximum(event_new[e],1e-300))-np.log(np.maximum(event_wt[e],1e-300))
         changed=observed&np.any(delta!=0,axis=1)
         if not changed.any():continue
-        s=settings(c or {'model':{}})['count_shrinkage'];pooled=np.asarray(state['pooled_composition'])
+        if c is None:
+            state_settings=prior.get('isoform_state_policy',{}).get('settings',{})
+            s=state_settings.get('count_shrinkage',DEFAULTS['count_shrinkage'])
+        else:
+            s=settings(c)['count_shrinkage']
+        pooled=np.asarray(state['pooled_composition'])
         P=(C[changed]+s*pooled)/(N[changed,None]+s)
         updated=softmax(np.log(np.maximum(P,1e-12))+delta[changed],axis=1)
-        rel=np.asarray(state['reliability']);factor=state['factor_index'];pooled=np.asarray(state['pooled_composition'])
+        factor=state['factor_index']
         for feat in by_state.get(state['state_index'],[]):
             k=feat['branch_index']
-            result[changed,feat['index']]=direct[changed,factor]*(updated[:,k]-pooled[k])*rel[changed]
+            result[changed,feat['index']]=direct[changed,factor]*(updated[:,k]-pooled[k])
         changes.append({'factor_id':state['factor_id'],'source_event':state['source_event'],
                         'observed_cells_updated':int(changed.sum()),'max_composition_delta':float(np.max(np.abs(updated-P)))})
     return result,changes

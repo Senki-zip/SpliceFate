@@ -72,8 +72,10 @@ def propagate(models,X,frame,times,prior,targets,strength,c):
         entry['isoform_updates']=updates
         if not np.isfinite(next_state).all():stop='nonfinite_isoform_state';break
         difference=next_state-current;delta=float(np.max(np.abs(difference)));norm=float(np.linalg.norm(difference))
-        entry.update(next_input_max_change=delta,next_input_update_norm=norm)
-        if max(logit_change,norm)>c['simulation'].get('divergence_limit',10.):
+        nonzero=np.count_nonzero(difference)
+        rms=norm/float(np.sqrt(nonzero)) if nonzero else 0.
+        entry.update(next_input_max_change=delta,next_input_update_norm=norm,next_input_rms_change=rms)
+        if max(logit_change,delta)>c['simulation'].get('divergence_limit',10.):
             stop='divergence_limit_exceeded';break
         if delta<=c['simulation']['convergence_tolerance']:stop='no_new_isoform_input_change';break
         if r+1<c['simulation']['max_rounds']:previous_state=current;current=next_state
@@ -87,13 +89,14 @@ def relation_status(model,indices,changed,network_rows):
     return 'not_selected_by_quality' if network_rows else 'no_prior_path'
 
 
-def summarize_event(event,model,wt,new,components,N,frame,flags,status,network,targets,strength,stage_groups=None):
+def summarize_event(event,model,wt,new,components,N,frame,flags,status,network,targets,strength,stage_groups=None,*,unfitted_status=None):
     rows=[];k=len(event.get('branches',[])) or (model or {}).get('branch_count',0)
+    fit_status=model['status'] if model is not None else unfitted_status
     for stage,ix in (stage_groups if stage_groups is not None else frame.groupby('stage',sort=True).indices).items():
         ix=np.asarray(ix);n=N[ix];good=n>0;total=float(n.sum())
         for branch in range(k):
             row={'event':event['event'],'gene_id':event['gene'],'cell_stage':stage,'branch_index':branch,
-                 'targets':';'.join(sorted(targets)),'strength':strength,'target_relation_status':status,
+                 'targets':';'.join(sorted(targets)),'strength':strength,'target_relation_status':status,'event_fit_status':fit_status,
                  'network_best_rank':network.get('selection_rank'),'network_best_selection_score':network.get('selection_score'),
                  'network_best_oob_gain':network.get('oob_fit_gain'),'cells':len(ix),'observed_cells':int(good.sum()),
                  'observed_molecules':total,'aggregation_scope':'WT_event_molecule_weighted; observed_cells; all_cells'}
@@ -143,7 +146,8 @@ def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=Non
             else:N=np.asarray(m.get('observed_denominators',np.zeros(len(frame))))
             relation_rows=(network or {}).get(e,[])
             best=min(relation_rows,key=lambda r:(r.get('selection_rank') is None,r.get('selection_rank') or float('inf'),-float(r.get('selection_score') or 0)),default={})
-            if m and m['status']=='ok':
+            unfitted_status=None
+            if m is not None and m['status']=='ok':
                 wt=np.asarray(m['WT_prediction']);new,delta,flags=predict_change(m,X,current,frame,times)
                 pe=predict_change(m,X,expression,frame,times,with_flags=False)[0]
                 pdirect=predict_change(m,X,direct,frame,times,with_flags=False)[0]
@@ -172,12 +176,15 @@ def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=Non
                             counts_written+=1
             else:
                 wt=new=None;flags=None;components=()
-                status='event_unmodeled'
-                if not m:
-                    status=('event_unmodeled' if e in candidate_events else 'no_prior_path' if int(e) in eligible_events else 'event_unmodeled')
-                elif m['status']=='no_supported_factor_response':status='not_selected_by_quality' if relation_rows else 'no_prior_path'
-                if len(event.get('branches',[]))>c['model'].get('max_event_branches',8):status='event_unmodeled'
-            summary_rows.extend(summarize_event(event,m,wt,new,components,N,frame,flags,status,best,targets,strength,stage_groups))
+                if m is None:
+                    if len(event.get('branches',[]))>c['model'].get('max_event_branches',8):
+                        unfitted_status='too_many_branches_unmodeled'
+                    elif e in candidate_events:unfitted_status='not_selected_smoke_limit'
+                    elif int(e) in eligible_events:unfitted_status='no_prior_path'
+                    else:unfitted_status='insufficient_event_counts'
+                status='no_prior_path' if unfitted_status=='no_prior_path' else 'event_unmodeled'
+            summary_rows.extend(summarize_event(event,m,wt,new,components,N,frame,flags,status,best,targets,strength,stage_groups,
+                unfitted_status=unfitted_status))
         # Each worker gets only one gene's arrays. Limit submitted results in the iterator.
         def gene_jobs():
             for gene in sorted(affected_genes):

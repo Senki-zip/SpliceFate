@@ -118,21 +118,21 @@ def rank_relations(db,c):
     """Normalize gain/amplitude within each event; bootstrap stability is [0,1]."""
     db.execute('UPDATE single_relations SET selection_rank=NULL,selected=false,WT_weight=0,selection_score=NULL,normalized_fit_gain=NULL,normalized_response=NULL')
     cfg = selection_settings(c); weights = cfg['weights']; total = sum(weights.values())
-    for event, in db.execute('SELECT DISTINCT event_index FROM single_relations').fetchall():
-        rows = db.execute('''SELECT factor_id,oob_fit_gain,stability,response_score FROM single_relations
-            WHERE event_index=? AND status='ok' AND quality_status='ok'
-            AND oob_fit_gain>? AND response_score>? AND stability>=? AND oob_positive_gain_fraction>=?''',
-                          [event,cfg['min_oob_fit_gain'],cfg['min_response_score'],cfg['min_stability'],cfg['min_positive_gain_fraction']]).fetchall()
-        if not rows:
-            continue
-        gain_max = max(r[1] for r in rows); response_max = max(r[3] for r in rows)
-        values = []
-        for fid,gain,stability,response in rows:
-            g = gain/gain_max; r = response/response_max
-            score = (weights['fit_gain']*g+weights['stability']*stability+weights['response']*r)/total
-            values.append((g,r,score,event,fid))
-        db.executemany('''UPDATE single_relations SET normalized_fit_gain=?,normalized_response=?,
-            selection_score=? WHERE event_index=? AND factor_id=?''',values)
+    db.execute('''WITH normalized AS (
+        SELECT event_index,factor_id,stability,
+            oob_fit_gain/max(oob_fit_gain) OVER by_event AS fit_gain,
+            response_score/max(response_score) OVER by_event AS response
+        FROM single_relations
+        WHERE status='ok' AND quality_status='ok'
+            AND oob_fit_gain>? AND response_score>? AND stability>=? AND oob_positive_gain_fraction>=?
+        WINDOW by_event AS (PARTITION BY event_index)
+        )
+        UPDATE single_relations AS edge SET normalized_fit_gain=normalized.fit_gain,
+            normalized_response=normalized.response,
+            selection_score=(?*normalized.fit_gain+?*normalized.stability+?*normalized.response)/?
+        FROM normalized WHERE edge.event_index=normalized.event_index AND edge.factor_id=normalized.factor_id''',
+        [cfg['min_oob_fit_gain'],cfg['min_response_score'],cfg['min_stability'],cfg['min_positive_gain_fraction'],
+         weights['fit_gain'],weights['stability'],weights['response'],total])
     db.execute('''UPDATE single_relations AS edge SET selection_rank=ranked.r,
         selected=ranked.r<=?, WT_weight=ranked.w FROM (
         SELECT event_index,factor_id,

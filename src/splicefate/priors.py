@@ -86,7 +86,9 @@ def build_priors(data,c,output=None):
             if factors[fid][0] not in expressed:raise ValueError(f'Target {target} absent/unexpressed in full gene input')
             seeds.append(fid)
     for target in extra:
-        hits={identities.get(f,f) for f,g,s in db.execute("SELECT factor_id,gene_id,gene_symbol FROM factors WHERE upper(gene_symbol)=upper(?) OR gene_id=? OR factor_id=?",[target,target,target]).fetchall()}
+        hits={identities.get(f,f) for (f,) in db.execute('''SELECT DISTINCT f.factor_id
+            FROM factors f LEFT JOIN factor_aliases a USING(factor_id)
+            WHERE upper(f.gene_symbol)=upper(?) OR f.gene_id=? OR f.factor_id=? OR upper(a.alias)=upper(?)''',[target,target,target,target]).fetchall()}
         if len(hits)!=1:raise ValueError('Extra target does not resolve uniquely: '+target)
         fid=next(iter(hits))
         if factors[fid][0] not in expressed:raise ValueError('Extra target not expressed: '+target)

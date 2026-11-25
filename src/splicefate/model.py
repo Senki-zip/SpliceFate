@@ -205,10 +205,11 @@ def fit_event(C,X,frame,t,indices,pairs,c,composition_features=()):
     ref=support_values[good];std=np.maximum(ref.std(0),1e-6);mean=ref.mean(0);u=(ref-mean)/std
     k=min(c['model'].get('support_neighbors',10),max(len(u)-1,0))
     # Match densities within independent trajectories, never borrow another branch.
-    radii={}
+    radii={};branch_neighbors={}
     ref_branches=frame.branch.to_numpy()[good]
     for branch in sorted(set(ref_branches)):
         ub=u[ref_branches==branch];kb=min(k,len(ub)-1)
+        branch_neighbors[str(branch)]=kb
         radii[str(branch)]=(max(float(np.quantile(NearestNeighbors(n_neighbors=kb+1).fit(ub).kneighbors(ub)[0][:,kb],
             c['model']['support_distance_quantile'])),1e-6) if kb else 0.)
     radius=max(radii.values(),default=0.)
@@ -216,7 +217,7 @@ def fit_event(C,X,frame,t,indices,pairs,c,composition_features=()):
         'input_indices':list(indices),'pairs':[list(p) for p in pairs],'fit_objective':fit['fit_objective'],'iterations':fit['iterations'],
         'counted_cells':int(good.sum()),'molecules':float(C.sum()),'training_only':True,'input_diagnostics':diagnostics,
         'support':{'mean':mean.tolist(),'scale':std.tolist(),'reference_inputs':ref,
-                   'feature_indices':support_indices,'includes_time':True,'neighbors':k,'branch_radii':radii,
+                   'feature_indices':support_indices,'includes_time':True,'neighbors':k,'branch_radii':radii,'branch_neighbors':branch_neighbors,
                    'reference_branches':frame.branch[good].tolist(),'radius':max(radius,1e-6)},
         'WT_prediction':pred,
         'likelihood':'gamma_extended_DM_composite_pseudolikelihood_for_author_fractional_UMI_estimates' if c['model'].get('count_unit')=='author_fractional_umi_estimates' else 'Dirichlet_multinomial_composite_counts_fixed_shared_concentration',
@@ -252,7 +253,9 @@ def predict_change(model,Xold,Xnew,frame,t,with_flags=True):
         if not same.any():
             for i in ix:flags[i].append('branch_unsupported')
         else:
-            distances=NearestNeighbors(n_neighbors=1).fit(refu[same]).kneighbors(query[ix],return_distance=True)[0][:,0]
+            kb=support.get('branch_neighbors',{}).get(str(branch),support.get('neighbors',1))
+            kb=max(1,min(kb,int(same.sum())))
+            distances=NearestNeighbors(n_neighbors=kb).fit(refu[same]).kneighbors(query[ix],return_distance=True)[0][:,kb-1]
             radius=support.get('branch_radii',{}).get(str(branch),support['radius'])
             for i in ix[distances>radius]:flags[i].append('conditional_extrapolation')
     for f in model['design']['factors']:
