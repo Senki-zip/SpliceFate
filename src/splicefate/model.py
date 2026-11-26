@@ -66,6 +66,14 @@ def state_basis(frame,t,spec=None,observed=None):
     return matrix[:,spec.get('kept_columns',list(range(matrix.shape[1])))],spec
 
 
+def _stable_projection(base, target, ridge=1e-2):
+    """Project onto a basis with ridge stabilization outside the intercept."""
+    penalty = np.full(base.shape[1], ridge, dtype=float)
+    penalty[0] = 0.
+    gram = base.T @ base + np.diag(penalty)
+    return np.linalg.lstsq(gram, base.T @ target, rcond=1e-8)[0]
+
+
 def fit_design(X,frame,t,factor_indices,pair_indices,c,composition_features=(),observed_target=None):
     good=np.ones(len(frame),bool) if observed_target is None else np.asarray(observed_target,bool)
     B,state=state_basis(frame,t,observed=good);parts=[B];penalties=[np.r_[0,np.repeat(c['model']['state_ridge'],B.shape[1]-1)]]
@@ -91,15 +99,16 @@ def fit_design(X,frame,t,factor_indices,pair_indices,c,composition_features=(),o
         f['state_projection']=proj.tolist();f['start']=offset;f['width']=D.shape[1]
         parts.append(D);penalties.append(np.full(D.shape[1],c['model']['ridge']));spec['factors'].append(f)
         feature_slices[j]=(offset,offset+D.shape[1]);offset+=D.shape[1]
-    main=np.column_stack(parts)
     for a,b in pair_indices:
-        # Low-dimensional conditional interaction; residualize against all main effects.
+        # Residualize against state and the two local linear main effects.
         fa=next(f for f in spec['factors'] if f['index']==a);fb=next(f for f in spec['factors'] if f['index']==b)
         u=(X[:,a]-fa['mean'])/fa['scale'];v=(X[:,b]-fb['mean'])/fb['scale']
         D=(u*v)[:,None]
-        proj=np.linalg.lstsq(main[good],D[good],rcond=1e-8)[0];D=D-main@proj
+        base=np.column_stack([B,u,v])
+        proj=_stable_projection(base[good],D[good]);D=D-base@proj
         if np.std(D[good])<1e-6:continue
-        spec['interactions'].append({'a':int(a),'b':int(b),'projection':proj.tolist(),'main_width':main.shape[1],'column':offset})
+        spec['interactions'].append({'a':int(a),'b':int(b),'projection':proj.tolist(),
+                                     'projection_mode':'local_linear','column':offset})
         parts.append(D);penalties.append(np.array([c['model']['interaction_ridge']]));offset+=1
     spec['time_reference']={'context_time':state['context_time']}
     # Missing source observations are explicit nuisance gates, not filled fractions.
@@ -109,18 +118,17 @@ def fit_design(X,frame,t,factor_indices,pair_indices,c,composition_features=(),o
             parts.append(X[:,j,None]);penalties.append(np.array([c['model']['state_ridge']]))
             spec['composition_masks'].append(j)
             offset+=1
-        main_composition=np.column_stack(parts)
         for feature in composition_features:
             observed=(X[:,feature['mask_index']]>0)&good
             if observed.sum()<composition_settings(c)['min_joint_cells']:continue
             value=X[:,feature['index']];scale=max(float(np.std(value[observed])),1e-8)
             D=value[:,None]/scale
             if c['model']['state_dependent']:D=np.column_stack([D,D*z[:,None]])
-            proj=np.linalg.lstsq(main_composition[observed],D[observed],rcond=1e-8)[0]
-            residual=D-main_composition@proj
+            proj=_stable_projection(B[observed],D[observed])
+            residual=D-B@proj
             if np.max(np.std(residual[observed],axis=0))<1e-6:continue
             residual[X[:,feature['mask_index']]<=0]=0
-            saved={**feature,'scale':scale,'projection':proj.tolist(),'start':offset,
+            saved={**feature,'scale':scale,'projection':proj.tolist(),'projection_mode':'state_only','start':offset,
                    'width':D.shape[1],'joint_observed_cells':int(observed.sum()),
                    'WT_range':[float(value[observed].min()),float(value[observed].max())]}
             spec['compositions'].append(saved)
@@ -137,17 +145,22 @@ def design(X,frame,t,spec):
         D=_factor_basis(X[:,f['index']],f)
         if spec['state_dependent']:D=np.column_stack([D,D*z[:,None]])
         parts.append(D-B@np.asarray(f['state_projection']));flookup[f['index']]=f
-    main=np.column_stack(parts)
-    for term in spec['interactions']:
+    interactions=spec['interactions']
+    main=np.column_stack(parts) if any(term.get('projection_mode')!='local_linear' for term in interactions) else None
+    for term in interactions:
         a,b=term['a'],term['b'];fa,fb=flookup[a],flookup[b]
         u=(X[:,a]-fa['mean'])/fa['scale'];v=(X[:,b]-fb['mean'])/fb['scale']
-        parts.append((u*v)[:,None]-main@np.asarray(term['projection']))
+        base=np.column_stack([B,u,v]) if term.get('projection_mode')=='local_linear' else main
+        parts.append((u*v)[:,None]-base@np.asarray(term['projection']))
     for j in spec.get('composition_masks',[]):parts.append(X[:,j,None])
-    main_composition=np.column_stack(parts)
-    for feature in spec.get('compositions',[]):
+    compositions=spec.get('compositions',[])
+    main_composition=(np.column_stack(parts)
+                      if any(feature.get('projection_mode')!='state_only' for feature in compositions) else None)
+    for feature in compositions:
         D=X[:,feature['index'],None]/feature['scale']
         if spec['state_dependent']:D=np.column_stack([D,D*z[:,None]])
-        residual=D-main_composition@np.asarray(feature['projection'])
+        base=B if feature.get('projection_mode')=='state_only' else main_composition
+        residual=D-base@np.asarray(feature['projection'])
         residual[X[:,feature['mask_index']]<=0]=0
         parts.append(residual)
     return np.column_stack(parts)

@@ -25,8 +25,11 @@ def chain_event_branch(chain,event):
 
 
 def load_structures(data,models,c):
-    genes={m['gene_id'] for m in models.values() if m['status']=='ok'}
-    events_by_gene={g:[m['event_index'] for m in models.values() if m['status']=='ok' and m['gene_id']==g] for g in genes}
+    events_by_gene = {}
+    for m in models.values():
+        if m['status'] == 'ok':
+            events_by_gene.setdefault(m['gene_id'], []).append(m['event_index'])
+    genes = set(events_by_gene)
     root=Path(c['input']['genes']);counts=sparse.load_npz(root/'isoform_counts.npz').tocsr()
     records_by_gene={}
     for chunk in pd.read_csv(root/'isoforms.tsv',sep='\t',chunksize=20000):
@@ -80,7 +83,12 @@ def reconstruct(prior,maps,targets,lam):
         return value,pi*(grad-grad@pi)
     fit=minimize(objective,np.log(prior),jac=True,method='L-BFGS-B',options={'maxiter':300,'ftol':1e-10})
     if not fit.success:return prior.copy(),{'status':'structure_optimizer_not_converged','rank':0,'conflict':None}
-    pi=softmax(fit.x);conflict=float(np.mean([np.sum(np.abs(H@pi/(D@pi)-target)) for H,D,target in constraints]))
+    pi = softmax(fit.x)
+    residuals = []
+    for H, D, target in constraints:
+        den = max(float(D @ pi), 1e-12)
+        residuals.append(np.sum(np.abs((H @ pi) / den - target)))
+    conflict = float(np.mean(residuals))
     rank=int(np.linalg.matrix_rank(np.asarray(J),tol=1e-7)) if len(J) else 0
     return pi,{'status':'ok' if rank>=len(prior)-1 else 'structure_unresolved','rank':rank,'conflict':conflict}
 
