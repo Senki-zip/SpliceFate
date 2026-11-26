@@ -8,7 +8,7 @@ input:
   velocity_times: null
   intron_counts: data/processed/GSE295932_Nontarget_stimulated_hg38_cluster/regions
 assembly: hg38
-output: runs/GSE295932_stimulated_v1_full
+output: runs/GSE295932_stimulated_v2_binned_allwt
 runtime:
   python_binary: python
   threads: 24
@@ -95,13 +95,16 @@ model:
   max_factors: 5
   network_selection:
     method: all_single_relations_then_weighted_quality
+    screening_mode: all_wt_penalized
     min_response_score: 0.0
-    bootstrap_repeats: 10
+    min_partial_r2: 0.02
+    min_penalized_fit_gain: 0.0
+    bootstrap_repeats: 0
     bootstrap_seed: 42
     weights:
-      fit_gain: 0.45
-      stability: 0.45
-      response: 0.1
+      fit_gain: 0.8
+      stability: 0.0
+      response: 0.2
     min_oob_fit_gain: 0.0
     min_positive_gain_fraction: 0.6
     min_stability: 0.3
@@ -111,6 +114,7 @@ model:
   selection_mode: all_passing_singles_hybrid
   max_single_factors: null
   group_gates:
+    min_group_penalized_gain: 0.05
     min_group_rows: 12
     min_group_cell_ess: 30.0
     min_group_effective_rows: 12.0

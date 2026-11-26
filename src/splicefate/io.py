@@ -106,22 +106,27 @@ def validate_config(c):
         ('model',model,{'output_cap_lambda':(0.,np.inf)}),
         ('model.group_gates',gates,{'min_group_cell_ess':(0.,np.inf),'min_group_effective_rows':(0.,np.inf),
             'max_geometry_condition':(1.,np.inf),'min_group_oob_gain':(0.,np.inf),
-            'min_group_positive_gain_fraction':(0.,1.)}),
+            'min_group_positive_gain_fraction':(0.,1.),'min_group_penalized_gain':(0.,1.)}),
     ]:
         for key,(low,high) in bounds.items():
             value=values[key]
             if (type(value) not in (int,float) or not np.isfinite(value) or not low<=value<=high
-                    or (key=='overlap_factor' and value==0)):
+                    or (key=='overlap_factor' and value==0) or (key=='min_group_penalized_gain' and value==1)):
                 raise ValueError(f'Invalid {section}.{key}')
     from .network import selection_settings,POLICY
+    if not isinstance(model.get('network_selection',{}),dict):
+        raise ValueError('model.network_selection must be a mapping')
     selection=selection_settings(c);c['model']['network_selection']=selection
     if selection['method']!=POLICY:
         raise ValueError('model.network_selection.method must be '+POLICY)
-    for key in ['min_response_score','min_oob_fit_gain']:
+    if selection['screening_mode'] not in ('all_wt_penalized','cell_oob'):
+        raise ValueError('Invalid model.network_selection.screening_mode')
+    all_wt=selection['screening_mode']=='all_wt_penalized'
+    for key in ['min_response_score','min_oob_fit_gain','min_penalized_fit_gain']:
         minimum=selection[key]
         if isinstance(minimum,bool) or not isinstance(minimum,(int,float)) or not np.isfinite(minimum) or minimum<0:
             raise ValueError('model.network_selection.'+key+' must be finite and nonnegative')
-    for key,minimum in [('bootstrap_repeats',2),('bootstrap_seed',0)]:
+    for key,minimum in [('bootstrap_repeats',0 if all_wt else 2),('bootstrap_seed',0)]:
         value=selection[key]
         if isinstance(value,bool) or not isinstance(value,int) or value<minimum:
             raise ValueError('Invalid model.network_selection.'+key)
@@ -130,7 +135,9 @@ def validate_config(c):
         raise ValueError('network selection weights require fit_gain, stability and response')
     if any(isinstance(w,bool) or not isinstance(w,(int,float)) or not np.isfinite(w) or w<0 for w in weights.values()) or sum(weights.values())<=0:
         raise ValueError('network selection weights must be finite, nonnegative with positive sum')
-    for key in ['min_positive_gain_fraction','min_stability']:
+    if all_wt and weights['fit_gain']+weights['response']<=0:
+        raise ValueError('all_wt_penalized network selection weights require positive fit_gain + response')
+    for key in ['min_positive_gain_fraction','min_stability','min_partial_r2']:
         v=selection[key]
         if isinstance(v,bool) or not isinstance(v,(int,float)) or not np.isfinite(v) or not 0<=v<=1:
             raise ValueError('model.network_selection.'+key+' must be within [0,1]')

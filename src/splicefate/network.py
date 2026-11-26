@@ -22,6 +22,8 @@ LOG = logging.getLogger('splicefate')
 POLICY = 'all_single_relations_then_weighted_quality'
 SCORE = 'mean_adjacent_WT_factor_response_total_variation'
 OOB_SCOPE = 'cell_disjoint_OOB_conditioned_on_frozen_prepare_features'
+ALL_WT_EVIDENCE = 'all_WT_penalized_no_bootstrap'
+ALL_WT_OOB_SCOPE = 'not_applicable_all_wt_screening'
 
 
 class BinBootstrapDraw(NamedTuple):
@@ -36,11 +38,15 @@ class BinBootstrapDraw(NamedTuple):
 
 
 def selection_settings(c):
-    return {'method':POLICY, 'min_response_score':0., 'min_oob_fit_gain':0.,
+    configured = c['model'].get('network_selection', {})
+    return {'method':POLICY, 'screening_mode':'all_wt_penalized',
+            'min_partial_r2':.02, 'min_penalized_fit_gain':0.,
+            'min_response_score':0., 'min_oob_fit_gain':0.,
             'min_positive_gain_fraction':.6,'min_stability':.3,
-            'bootstrap_repeats':10, 'bootstrap_seed':42,
+            'bootstrap_repeats':10 if configured.get('screening_mode')=='cell_oob' else 0,
+            'bootstrap_seed':42,
             'weights':{'fit_gain':.45, 'stability':.45, 'response':.10},
-            **c['model'].get('network_selection', {})}
+            **configured}
 
 
 def count_log_likelihood(counts, probabilities, concentration):
@@ -48,6 +54,16 @@ def count_log_likelihood(counts, probabilities, concentration):
     alpha = np.maximum(concentration * probabilities, 1e-12)
     return (gammaln(concentration)-gammaln(concentration+counts.sum(1))
             + (gammaln(alpha+counts)-gammaln(alpha)).sum(1))
+
+
+def weighted_brier_mse(counts, probabilities):
+    N = counts.sum(1)
+    total = float(N.sum())
+    if total <= 0:
+        return 0.0
+    observed = N > 0
+    y = counts[observed] / N[observed, None]
+    return float(np.sum(N[observed] * np.sum((y - probabilities[observed]) ** 2, axis=1)) / total)
 
 
 def bootstrap_samples(frame, observed, repeats, seed):
@@ -91,6 +107,42 @@ def baseline_fits(D,C,penalty,samples,c):
             [fit_count_design(D[sample],C[sample],penalty,c) for sample in samples])
 
 
+def _full_wt_metrics(model,C,p,p0,baseline,kappa):
+    null_ll = count_log_likelihood(C,p0,kappa)
+    mse0 = weighted_brier_mse(C,p0)
+    mse1 = weighted_brier_mse(C,p)
+    return dict(fit_gain=float(np.mean(count_log_likelihood(C,p,kappa)-null_ll)),
+                penalized_fit_gain=float(baseline['fit_objective']-model['fit_objective']),
+                partial_r2=float(max(0.,(mse0-mse1)/mse0)) if mse0>0. else 0.,
+                baseline_mean_log_likelihood=float(null_ll.mean()),
+                baseline_brier_mse=mse0,full_brier_mse=mse1)
+
+
+def relation_quality_all_wt(model,counts,X,frame,times,c,baseline_cache=None):
+    """Compare the full single fit with the reduced design on all observed WT rows."""
+    from .model import fit_count_design, observed_rows
+    D,C,penalty,columns = quality_design(model,counts,X,frame,times,c)
+    null = D[:,columns]
+    null_penalty = penalty[columns]
+    key = (null.shape,null.tobytes(),null_penalty.tobytes()) if baseline_cache is not None else None
+    if key is not None and key in baseline_cache:
+        baseline = baseline_cache[key]
+    else:
+        baseline = fit_count_design(null,C,null_penalty,c)
+        if key is not None:
+            baseline_cache[key] = baseline
+    result = dict(quality_status='baseline_'+baseline['status'],fit_gain=None,
+                  penalized_fit_gain=None,partial_r2=None,oob_fit_gain=None,
+                  oob_positive_gain_fraction=None,stability=None,bootstrap_successes=0,
+                  bootstrap_positive_gain_fraction=None,bootstrap_effect_agreement=None,
+                  bootstrap_gain_mean=None)
+    if baseline['status']=='ok':
+        p = np.asarray(model['WT_prediction'])[observed_rows(counts,frame)]
+        p0 = _probability(null,baseline)
+        result.update(quality_status='ok',**_full_wt_metrics(model,C,p,p0,baseline,c['model']['dm_concentration']))
+    return result
+
+
 def relation_quality(model,counts,X,frame,times,c,samples,baseline_cache=None):
     """Paired full/reduced fits scored only on each draw's out-of-bag rows."""
     from .model import fit_count_design
@@ -108,7 +160,7 @@ def relation_quality(model,counts,X,frame,times,c,samples,baseline_cache=None):
     if baseline['status']!='ok':return empty
     kappa=c['model']['dm_concentration'];cfg=selection_settings(c)
     p=np.asarray(model['WT_prediction'])[counts.sum(1)>0];p0=_probability(null,baseline)
-    gain=float(np.mean(count_log_likelihood(C,p,kappa)-count_log_likelihood(C,p0,kappa)))
+    wt_metrics=_full_wt_metrics(model,C,p,p0,baseline,kappa)
     stability=[];agreements=[];gains=[];audit=[];successes=0
     for sample,reduced in zip(samples,reduced_draws):
         oob=np.ones(len(C),bool);oob[np.unique(sample)]=False
@@ -126,36 +178,58 @@ def relation_quality(model,counts,X,frame,times,c,samples,baseline_cache=None):
         stability.append(agreement if bgain>cfg['min_oob_fit_gain'] else 0.)
         audit.append({'status':'ok','oob_cells':int(oob.sum()),'gain':bgain,'agreement':agreement})
     positive=sum(g>cfg['min_oob_fit_gain'] for g in gains)/len(samples)
-    return {'quality_status':'ok' if successes else 'no_valid_oob_fits','fit_gain':gain,
+    return {'quality_status':'ok' if successes else 'no_valid_oob_fits',**wt_metrics,
             'oob_fit_gain':float(np.mean(gains)) if gains else None,
             'oob_positive_gain_fraction':positive,'stability':float(np.mean(stability)),
-            'baseline_mean_log_likelihood':float(count_log_likelihood(C,p0,kappa).mean()),
             'bootstrap_successes':successes,'bootstrap_positive_gain_fraction':positive,
             'bootstrap_effect_agreement':float(np.mean(agreements)) if agreements else 0.,
             'bootstrap_gain_mean':float(np.mean(gains)) if gains else None,'oob_draws':audit}
 
 
 def rank_relations(db,c):
-    """Normalize gain/amplitude within each event; bootstrap stability is [0,1]."""
+    """Normalize screening scores within each event and assign network weights."""
     db.execute('UPDATE single_relations SET selection_rank=NULL,selected=false,WT_weight=0,selection_score=NULL,normalized_fit_gain=NULL,normalized_response=NULL')
-    cfg = selection_settings(c); weights = cfg['weights']; total = sum(weights.values())
-    db.execute('''WITH normalized AS (
-        SELECT event_index,factor_id,stability,
-            oob_fit_gain/max(oob_fit_gain) OVER by_event AS fit_gain,
-            response_score/max(response_score) OVER by_event AS response
-        FROM single_relations
-        WHERE status='ok' AND quality_status='ok'
-            AND oob_fit_gain>? AND response_score>? AND stability>=? AND oob_positive_gain_fraction>=?
-        WINDOW by_event AS (PARTITION BY event_index)
-        )
-        UPDATE single_relations AS edge SET normalized_fit_gain=normalized.fit_gain,
-            normalized_response=normalized.response,
-            selection_score=(?*normalized.fit_gain+?*normalized.stability+?*normalized.response)/?
-        FROM normalized WHERE edge.event_index=normalized.event_index AND edge.factor_id=normalized.factor_id''',
-        [cfg['min_oob_fit_gain'],cfg['min_response_score'],cfg['min_stability'],cfg['min_positive_gain_fraction'],
-         weights['fit_gain'],weights['stability'],weights['response'],total])
+    cfg = selection_settings(c); weights = cfg['weights']
+    all_wt = cfg['screening_mode']=='all_wt_penalized'
+    if all_wt:
+        weight_scale = max(weights['fit_gain'],weights['response'])
+        w_fit = weights['fit_gain']/weight_scale
+        w_response = weights['response']/weight_scale
+        db.execute('''WITH normalized AS (
+            SELECT event_index,factor_id,
+                coalesce(partial_r2/nullif(max(partial_r2) OVER by_event,0),0) AS fit_gain,
+                response_score/max(response_score) OVER by_event AS response
+            FROM single_relations
+            WHERE status='ok' AND quality_status='ok'
+                AND partial_r2>=? AND penalized_fit_gain>? AND response_score>?
+            WINDOW by_event AS (PARTITION BY event_index)
+            )
+            UPDATE single_relations AS edge SET normalized_fit_gain=normalized.fit_gain,
+                normalized_response=normalized.response,
+                selection_score=(?*normalized.fit_gain+?*normalized.response)/?
+            FROM normalized WHERE edge.event_index=normalized.event_index AND edge.factor_id=normalized.factor_id''',
+            [cfg['min_partial_r2'],cfg['min_penalized_fit_gain'],cfg['min_response_score'],
+             w_fit,w_response,w_fit+w_response])
+    else:
+        db.execute('''WITH normalized AS (
+            SELECT event_index,factor_id,stability,
+                oob_fit_gain/max(oob_fit_gain) OVER by_event AS fit_gain,
+                response_score/max(response_score) OVER by_event AS response
+            FROM single_relations
+            WHERE status='ok' AND quality_status='ok'
+                AND oob_fit_gain>? AND response_score>? AND stability>=? AND oob_positive_gain_fraction>=?
+            WINDOW by_event AS (PARTITION BY event_index)
+            )
+            UPDATE single_relations AS edge SET normalized_fit_gain=normalized.fit_gain,
+                normalized_response=normalized.response,
+                selection_score=(?*normalized.fit_gain+?*normalized.stability+?*normalized.response)/?
+            FROM normalized WHERE edge.event_index=normalized.event_index AND edge.factor_id=normalized.factor_id''',
+            [cfg['min_oob_fit_gain'],cfg['min_response_score'],cfg['min_stability'],cfg['min_positive_gain_fraction'],
+             weights['fit_gain'],weights['stability'],weights['response'],sum(weights.values())])
     from .model import hybrid_selection
-    if hybrid_selection(c):
+    hybrid = hybrid_selection(c)
+    if all_wt or hybrid:
+        limit = c['model'].get('max_single_factors') if hybrid else c['model']['max_factors']
         db.execute('''WITH ranked AS (
             SELECT event_index,factor_id,row_number() OVER
                 (PARTITION BY event_index ORDER BY selection_score DESC,factor_id) AS r
@@ -170,7 +244,7 @@ def rank_relations(db,c):
         )
         UPDATE single_relations AS edge SET selection_rank=weighted.r,selected=weighted.keep,WT_weight=weighted.w
         FROM weighted WHERE edge.event_index=weighted.event_index AND edge.factor_id=weighted.factor_id''',
-                   [c['model'].get('max_single_factors')]*2)
+                   [limit,limit])
         return
     db.execute('''UPDATE single_relations AS edge SET selection_rank=ranked.r,
         selected=ranked.r<=?, WT_weight=ranked.w FROM (
@@ -285,8 +359,8 @@ def relation_quality_binned(model,counts,X,frame,times,c,draws,composition,cache
                   bootstrap_positive_gain_fraction=0.,bootstrap_effect_agreement=0.,bootstrap_gain_mean=None)
     if baseline['status']!='ok':
         return result
-    null_ll = count_log_likelihood(C,_probability(D[:,columns],baseline),kappa)
-    gain = np.mean(count_log_likelihood(C,np.asarray(model['WT_prediction'])[observed],kappa)-null_ll)
+    wt_metrics = _full_wt_metrics(model,C,np.asarray(model['WT_prediction'])[observed],
+                                  _probability(D[:,columns],baseline),baseline,kappa)
     gains, agreements, audit = [], [], []
     for r,(X_tr,C_tr,valid_tr,X_oo,C_oo,valid_oo,oob_cells) in enumerate(draws):
         train = valid_tr & observed_rows(C_tr,frame)
@@ -318,13 +392,12 @@ def relation_quality_binned(model,counts,X,frame,times,c,draws,composition,cache
         audit.append(dict(status='ok',train_bins=int(train.sum()),oob_bins=int(oob.sum()),
                           oob_cells=oob_cells,gain=bgain,agreement=agreement))
     positive=sum(g>cfg['min_oob_fit_gain'] for g in gains)/len(draws)
-    result.update(quality_status='ok' if gains else 'no_valid_oob_fits',fit_gain=float(gain),
+    result.update(quality_status='ok' if gains else 'no_valid_oob_fits',**wt_metrics,
                   oob_fit_gain=float(np.mean(gains)) if gains else None,
                   stability=sum(a for a,g in zip(agreements,gains) if g>cfg['min_oob_fit_gain'])/len(draws),
                   bootstrap_successes=len(gains),oob_positive_gain_fraction=positive,
                   bootstrap_positive_gain_fraction=positive,bootstrap_effect_agreement=float(np.mean(agreements)) if gains else 0.,
-                  bootstrap_gain_mean=float(np.mean(gains)) if gains else None, oob_draws=audit,
-                  baseline_mean_log_likelihood=float(null_ll.mean()))
+                  bootstrap_gain_mean=float(np.mean(gains)) if gains else None, oob_draws=audit)
     return result
 
 
@@ -349,14 +422,18 @@ def event_relations(e,data,frame,times,prior,X,c,fit_single,predict_logits,bin_p
     from .model import observed_rows
 
     event=data['events'][e];C=event_counts(data,e)
+    cfg=selection_settings(c)
+    all_wt=cfg['screening_mode']=='all_wt_penalized'
     if bin_plan is None:
-        counts=C;cfg=selection_settings(c)
-        seed=(cfg['bootstrap_seed']+int.from_bytes(hashlib.sha256(event['event'].encode()).digest()[:4],'little'))%(2**32)
-        samples=bootstrap_samples(frame,observed_rows(counts,frame),cfg['bootstrap_repeats'],seed)
+        counts=C
+        if not all_wt:
+            seed=(cfg['bootstrap_seed']+int.from_bytes(hashlib.sha256(event['event'].encode()).digest()[:4],'little'))%(2**32)
+            samples=bootstrap_samples(frame,observed_rows(counts,frame),cfg['bootstrap_repeats'],seed)
     else:
         counts=bin_plan.K_eff@C
         frame,times=bin_plan.bin_frame,bin_plan.centers
-        draws=binned_event_draws(bin_views,C)
+        if not all_wt:
+            draws=binned_event_draws(bin_views,C)
     observed=observed_rows(counts,frame)
     pairs=adjacent_pairs(frame,times);reference=X.copy();cache={};records=[]
     findex={f:j for j,f in enumerate(prior['factor_ids'])}
@@ -370,9 +447,13 @@ def event_relations(e,data,frame,times,prior,X,c,fit_single,predict_logits,bin_p
         score,supported=(response_score(model,X,reference,frame,times,observed,pairs,predict_logits)
                          if model['status']=='ok' else (0. if model['status']=='constant_input_on_observed_cells' else None,0))
         if model['status']!='ok':
-            quality={'quality_status':'single_fit_failed','fit_gain':None,'oob_fit_gain':None,'oob_positive_gain_fraction':0.,
-                     'stability':0.,'bootstrap_successes':0,'bootstrap_positive_gain_fraction':0.,
-                     'bootstrap_effect_agreement':0.,'bootstrap_gain_mean':None}
+            oob_default=None if all_wt else 0.
+            quality={'quality_status':'single_fit_failed','fit_gain':None,'oob_fit_gain':None,
+                     'oob_positive_gain_fraction':oob_default,'stability':oob_default,'bootstrap_successes':0,
+                     'bootstrap_positive_gain_fraction':oob_default,'bootstrap_effect_agreement':oob_default,
+                     'bootstrap_gain_mean':None}
+        elif all_wt:
+            quality=relation_quality_all_wt(model,counts,X,frame,times,c,cache)
         elif bin_plan is None:
             quality=relation_quality(model,counts,X,frame,times,c,samples,cache)
         else:
@@ -383,20 +464,20 @@ def event_relations(e,data,frame,times,prior,X,c,fit_single,predict_logits,bin_p
         compact.setdefault('path_count',len(candidate.get('paths',[])))
         records.append((e,event['event'],event['gene'],fid,candidate.get('symbol',fid),model['status'],score,supported,
             json.dumps(compact,allow_nan=False),json.dumps(compact_model(model,observed),allow_nan=False),
-            *[quality.get(key) for key in ['quality_status','fit_gain','oob_fit_gain','oob_positive_gain_fraction','stability',
+            *[quality.get(key) for key in ['quality_status','fit_gain','partial_r2','penalized_fit_gain',
+                'oob_fit_gain','oob_positive_gain_fraction','stability',
                 'bootstrap_successes','bootstrap_positive_gain_fraction','bootstrap_effect_agreement','bootstrap_gain_mean']],
             json.dumps(quality,allow_nan=False)))
     return e,records
 
 
-def network_fingerprint(data,frame,times,prior,X,c,event_ids,bin_arrays=(),*,bin_plan=None):
+def network_fingerprint(data,frame,times,prior,X,c,event_ids,bin_arrays=(),*,bin_frame=None):
     from .io import digest
     config={k:v for k,v in c.items() if k not in ('runtime','execution','_config_path','_runtime_threads')}
     sources={p.name:digest(p) for p in Path(__file__).parent.glob('*.py')}
     h=hashlib.sha256()
-    if bin_plan is not None:
-        bin_arrays=(*bin_arrays,bin_plan.K_raw,bin_plan.K_eff,bin_plan.M_cell,bin_plan.valid,bin_plan.centers)
-        h.update(bin_plan.bin_frame.to_csv(index=False).encode())
+    if bin_frame is not None:
+        h.update(bin_frame.to_csv(index=False).encode())
     for a in (X,times,data['C'].data,data['C'].indices,data['C'].indptr,data['offsets'],*bin_arrays):
         v=np.ascontiguousarray(a);h.update(str(v.shape).encode());h.update(str(v.dtype).encode());h.update(v.tobytes())
     h.update(frame.to_csv(index=False).encode());h.update(json.dumps(data['events'],sort_keys=True).encode())
@@ -414,18 +495,25 @@ def learn_network(data,frame,times,prior,X,c,fit_single,predict_logits,path=None
     db=duckdb.connect(str(path) if path is not None else ':memory:')
     try:
         from .model import hybrid_selection
+        cfg=selection_settings(c)
+        screening_mode=cfg['screening_mode']
+        all_wt=screening_mode=='all_wt_penalized'
         event_ids=sorted(map(int,prior['events']))
         if event_limit is not None:event_ids=event_ids[:event_limit]
         bin_arrays=()
+        bin_frame=None
         if not binning_settings(c)['enabled']:
             bin_plan=None
         if bin_plan is not None:
-            if X_cell_factors is None:
-                X_cell_factors=data.get('X_cell_factors')
-            if X_cell_factors is None:
-                raise ValueError('Cell factor inputs are required with a frozen bin plan')
-            bin_arrays=(X_cell_factors,)
-        fingerprint=network_fingerprint(data,frame,times,prior,X,c,event_ids,bin_arrays,bin_plan=bin_plan)
+            bin_frame=bin_plan.bin_frame
+            bin_arrays=(bin_plan.K_raw,bin_plan.K_eff,bin_plan.M_cell,bin_plan.valid,bin_plan.centers)
+            if not all_wt:
+                if X_cell_factors is None:
+                    X_cell_factors=data.get('X_cell_factors')
+                if X_cell_factors is None:
+                    raise ValueError('Cell factor inputs are required with a frozen bin plan')
+                bin_arrays=(*bin_arrays,X_cell_factors)
+        fingerprint=network_fingerprint(data,frame,times,prior,X,c,event_ids,bin_arrays,bin_frame=bin_frame)
         tables={r[0] for r in db.execute('SHOW TABLES').fetchall()}
         if 'network_metadata' in tables:
             previous=dict(db.execute('SELECT key,value FROM network_metadata').fetchall())
@@ -434,7 +522,8 @@ def learn_network(data,frame,times,prior,X,c,fit_single,predict_logits,path=None
         else:
             db.execute("""CREATE TABLE single_relations(event_index INTEGER,event_id VARCHAR,gene_id VARCHAR,
                 factor_id VARCHAR,gene_symbol VARCHAR,status VARCHAR,response_score DOUBLE,supported_adjacent_pairs INTEGER,
-                candidate_json VARCHAR,model_json VARCHAR,quality_status VARCHAR,fit_gain DOUBLE,oob_fit_gain DOUBLE,
+                candidate_json VARCHAR,model_json VARCHAR,quality_status VARCHAR,fit_gain DOUBLE,
+                partial_r2 DOUBLE,penalized_fit_gain DOUBLE,oob_fit_gain DOUBLE,
                 oob_positive_gain_fraction DOUBLE,stability DOUBLE,bootstrap_successes INTEGER,
                 bootstrap_positive_gain_fraction DOUBLE,bootstrap_effect_agreement DOUBLE,bootstrap_gain_mean DOUBLE,
                 quality_json VARCHAR,normalized_fit_gain DOUBLE,normalized_response DOUBLE,selection_score DOUBLE,
@@ -444,15 +533,16 @@ def learn_network(data,frame,times,prior,X,c,fit_single,predict_logits,path=None
             db.execute('CREATE TABLE network_metadata(key VARCHAR PRIMARY KEY,value VARCHAR)')
             db.executemany('INSERT INTO network_metadata VALUES (?,?)',[
                 ('fingerprint',fingerprint),('status','learning_single_relations'),('selection_policy',POLICY),
-                ('response_score_definition',SCORE),('quality_settings',json.dumps(selection_settings(c))),
-                ('oob_scope',OOB_SCOPE),
+                ('response_score_definition',SCORE),('quality_settings',json.dumps(cfg)),
+                ('screening_mode',screening_mode),('training_evidence',ALL_WT_EVIDENCE if all_wt else OOB_SCOPE),
+                ('oob_scope',ALL_WT_OOB_SCOPE if all_wt else OOB_SCOPE),
                 ('max_factors_after_learning',str(c['model'].get('max_single_factors') if hybrid_selection(c) else c['model']['max_factors'])),
                 ('event_scope','all_prior_supported_events' if event_limit is None else 'limited_event_trial')])
         completed={r[0] for r in db.execute('SELECT event_index FROM completed_events').fetchall()}
         pending=[e for e in event_ids if e not in completed]
         LOG.info('Network resume: %d complete, %d pending events',len(completed),len(pending))
         bin_views=None
-        if bin_plan is not None and (pending or return_bin_views):
+        if bin_plan is not None and not all_wt and (pending or return_bin_views):
             bin_views=prepare_bin_bootstrap(bin_plan,frame,prior,data,X_cell_factors,c)
         payload=dict(data=data,frame=frame,times=times,prior=prior,X=X,c=c,bin_plan=bin_plan,bin_views=bin_views)
         workers=c.get('_runtime_threads',1)
@@ -484,7 +574,8 @@ def learn_network(data,frame,times,prior,X,c,fit_single,predict_logits,path=None
                     if records:
                         import pandas as pd
                         columns=['event_index','event_id','gene_id','factor_id','gene_symbol','status','response_score','supported_adjacent_pairs',
-                            'candidate_json','model_json','quality_status','fit_gain','oob_fit_gain','oob_positive_gain_fraction','stability',
+                            'candidate_json','model_json','quality_status','fit_gain','partial_r2','penalized_fit_gain',
+                            'oob_fit_gain','oob_positive_gain_fraction','stability',
                             'bootstrap_successes','bootstrap_positive_gain_fraction','bootstrap_effect_agreement','bootstrap_gain_mean','quality_json']
                         batch=pd.DataFrame(records,columns=columns);db.register('event_batch',batch)
                         db.execute('INSERT INTO single_relations ('+','.join(columns)+') SELECT * FROM event_batch');db.unregister('event_batch')

@@ -16,7 +16,7 @@ HYBRID = 'single_sum_hybrid'
 HYBRID_SELECTION = 'all_passing_singles_hybrid'
 GROUP_DEFAULTS = dict(min_group_rows=12, min_group_cell_ess=30., min_group_effective_rows=12.,
                       max_geometry_condition=10000., min_group_oob_gain=.005,
-                      min_group_positive_gain_fraction=.6)
+                      min_group_positive_gain_fraction=.6, min_group_penalized_gain=.05)
 
 
 def hybrid_selection(c):
@@ -480,10 +480,11 @@ def _group_split(X_tr,C_tr,X_oo,C_oo,frame,times,train,oob,minimum):
 
 
 def fit_supported_groups(X,C,frame,times,pairs,c,*,singles,bin_plan=None,C_cell_N=None,draws=(),seed=42):
-    from .network import count_log_likelihood
+    from .network import count_log_likelihood, selection_settings, weighted_brier_mse
     if not pairs:
         return [],[]
     cfg=group_settings(c)
+    all_wt=selection_settings(c)['screening_mode']=='all_wt_penalized'
     observed=observed_rows(C,frame)
     n=int(observed.sum())
     support=CellSupport(float(n),float(n))
@@ -524,9 +525,33 @@ def fit_supported_groups(X,C,frame,times,pairs,c,*,singles,bin_plan=None,C_cell_
             continue
         if baseline_wt is None:
             baseline_wt=single_sum_probability(singles,X_wt,fr_wt,t_wt)
+            if all_wt:
+                baseline_mse=weighted_brier_mse(C_wt,baseline_wt)
+                baseline_ll=count_log_likelihood(C_wt,baseline_wt,kappa)
+                logits_wt=np.column_stack([_log_ratio(baseline_wt),np.zeros(len(C_wt))])
+                n_eff=max(support.kernel_effective_rows,1.)
+                complexity_term=((C_wt.shape[1]-1)/n_eff)*baseline_mse
+        if all_wt and baseline_mse<=0.:
+            record.update(baseline_mse=baseline_mse,penalized_gain=0.,reason='zero_baseline_mse')
+            continue
         group,fit=_fit_group_counts(C_wt,X_wt,fr_wt,t_wt,pair,c,baseline_wt)
         if group is None:
             record['reason']=fit['status']
+            continue
+        if all_wt:
+            p_group=softmax(logits_wt+_group_term(group,X_wt,fr_wt,t_wt),axis=1)
+            group_mse=weighted_brier_mse(C_wt,p_group)
+            ridge_term=(c['model']['interaction_ridge']/max(len(C_wt),1))*float(np.mean(np.square(group['coefficient'])))*.25
+            penalized_group_mse=group_mse+ridge_term+complexity_term
+            penalized_gain=float((baseline_mse-penalized_group_mse)/baseline_mse)
+            dm_fit_gain=float(np.mean(count_log_likelihood(C_wt,p_group,kappa)-baseline_ll))
+            record.update(baseline_mse=baseline_mse,group_mse=group_mse,penalized_group_mse=penalized_group_mse,
+                          penalized_gain=penalized_gain,dm_fit_gain=dm_fit_gain,n_eff=n_eff)
+            if penalized_gain>=cfg['min_group_penalized_gain'] and dm_fit_gain>0:
+                record['accepted']=True
+                groups.append(group)
+            else:
+                record['reason']='insufficient_penalized_gain'
             continue
         gains=[]
         if splits is None:
@@ -586,6 +611,7 @@ def fit_models(data,frame,times,prior,X,c,event_limit=None,network_path=None,mod
     models={};audit=[];findex={f:j for j,f in enumerate(prior['factor_ids'])}
     pairs={tuple(sorted(p['members'])) for p in prior['pairs']}
     hybrid=hybrid_selection(c)
+    bootstrap_seed=selection_settings(c)['bootstrap_seed']
     if not binning_settings(c)['enabled']:
         bin_plan=None
     network,views=learn_network(data,frame,times,prior,X,c,fit_event,logits,network_path,event_limit,
@@ -621,7 +647,7 @@ def fit_models(data,frame,times,prior,X,c,event_limit=None,network_path=None,mod
                 draws=binned_event_draws(views,C_cell) if views is not None and ipairs else ()
                 groups,diagnostics=fit_supported_groups(X,C,frame,times,ipairs,c,
                     singles=singles,bin_plan=bin_plan,C_cell_N=C_cell_N,draws=draws,
-                    seed=selection_settings(c)['bootstrap_seed']+e)
+                    seed=bootstrap_seed+e)
                 model=assemble_hybrid(singles,groups,diagnostics,X,frame,times,observed_rows(C,frame),c)
             else:
                 composition=[f for f in prior.get('composition_features',[]) if f['factor_index'] in indices

@@ -105,7 +105,6 @@ def fitted_inputs(c):
 
 def fit(c,event_limit=None):
     from .model import fit_models,hybrid_selection
-    from .network import OOB_SCOPE
     from .structure import load_structures
     p,data,frame,times,prior,X,*plans=fitted_inputs(c)
     bin_plan=plans[0] if plans else None
@@ -119,8 +118,10 @@ def fit(c,event_limit=None):
     models,audit=fit_models(data,frame,times,prior,X,c,event_limit,network_path=network_path,model_root=p,bin_plan=bin_plan)
     import duckdb
     with duckdb.connect(str(network_path),read_only=True) as network:
+        screening_metadata=dict(network.execute('''SELECT key,value FROM network_metadata
+            WHERE key IN ('screening_mode','training_evidence','oob_scope')''').fetchall())
         network.execute('''COPY (SELECT event_id,gene_id,factor_id,gene_symbol,status,
-            response_score,supported_adjacent_pairs,quality_status,fit_gain,stability,
+            response_score,supported_adjacent_pairs,quality_status,fit_gain,partial_r2,penalized_fit_gain,stability,
             oob_fit_gain,oob_positive_gain_fraction,bootstrap_successes,bootstrap_positive_gain_fraction,bootstrap_effect_agreement,
             bootstrap_gain_mean,normalized_fit_gain,normalized_response,selection_score,
             selection_rank,selected,WT_weight
@@ -182,7 +183,7 @@ def fit(c,event_limit=None):
         'avg_retained_singles':float(np.mean(single_counts)) if single_counts else 0.,
         'manual_functional_weights_required':False,'S_count_unit':data.get('S_count_unit','integer_umi'),
         'artifacts':{n:digest(p/n) for n in ['models.duckdb','model_arrays.npz','structures_meta.json','structure_counts.npz']},
-        'prepared_provenance_sha256':prepared_provenance_sha256,'oob_scope':OOB_SCOPE,
+        'prepared_provenance_sha256':prepared_provenance_sha256,**screening_metadata,
         'network':json.loads(network_path.with_suffix('.summary.json').read_text()),
         'network_sha256':digest(network_path),
         'max_factors_after_network_learning':c['model'].get('max_single_factors') if hybrid_selection(c) else c['model']['max_factors']}
