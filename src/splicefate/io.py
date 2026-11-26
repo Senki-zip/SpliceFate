@@ -150,6 +150,9 @@ def validate_config(c):
         raise ValueError('priors.extra_targets must contain unique identifiers')
     if not isinstance(c['simulation'].setdefault('write_unchanged_cells',False),bool):
         raise ValueError('simulation.write_unchanged_cells must be boolean')
+    threshold=c['simulation'].setdefault('min_delta_threshold',1e-4)
+    if isinstance(threshold,bool) or not isinstance(threshold,(int,float)) or not np.isfinite(threshold) or threshold<0:
+        raise ValueError('simulation.min_delta_threshold must be finite and nonnegative')
     if 'gene_limit' in c['simulation']:raise ValueError('simulation.gene_limit is retired; remove it')
     for key in ['divergence_limit','convergence_tolerance']:
         value=c['simulation'][key]

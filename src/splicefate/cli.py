@@ -314,7 +314,7 @@ def simulate_run(c,targets,q,bootstrap=0):
         raise ValueError('Fit artifact changed: regulatory_network.duckdb')
     for file,sha in summary['artifacts'].items():
         if digest(p/file)!=sha:raise ValueError('Fit artifact changed: '+file)
-    models=ModelStore(p,data);structures=StructureStore(p)
+    models=ModelStore(p);structures=StructureStore(p)
     label='+'.join(sorted(targets)).replace('/','_')+f'_q{q:g}'
     out=p/'simulations'/label;out.mkdir(parents=True,exist_ok=True)
     wanted={f for target in targets for f,g,s in zip(prior['factor_ids'],prior['gene_ids'],prior['symbols']) if target in (f,g,s)}

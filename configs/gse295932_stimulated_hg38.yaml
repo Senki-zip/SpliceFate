@@ -161,3 +161,4 @@ simulation:
   structure_lambda: 10.0
   structure_prior_strength: 1.0
   write_unchanged_cells: false
+  min_delta_threshold: 1.0e-4

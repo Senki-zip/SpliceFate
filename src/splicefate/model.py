@@ -313,9 +313,21 @@ def prediction_flags(model,Xold,Xnew,frame,t,changed_rows,reference_rows=None):
             for i in ix:flags[i].append('branch_unsupported')
         else:
             kb=support.get('branch_neighbors',{}).get(str(branch),support.get('neighbors',1))
-            kb=max(1,min(kb,int(same.sum())))
-            distances=NearestNeighbors(n_neighbors=kb).fit(refu[same]).kneighbors(query[ix],return_distance=True)[0][:,kb-1]
+            branch_ref,branch_query=refu[same],query[ix]
+            kb=max(1,min(kb,len(branch_ref)))
             radius=support.get('branch_radii',{}).get(str(branch),support['radius'])
+            distances=None
+            if len(branch_ref)<=256 and len(branch_query)<=256:
+                pairwise=cdist(branch_query,branch_ref)
+                distances=np.partition(pairwise,kb-1,axis=1)[:,kb-1]
+                # The two kernels can round differently at the saved support radius.
+                scale_bound=max(np.abs(branch_ref).max(),np.abs(branch_query).max())
+                dimensions=branch_ref.shape[1]
+                eps=np.finfo(np.result_type(branch_ref,branch_query)).eps
+                if np.any(np.abs(distances**2-radius**2)<=32*eps*(dimensions*scale_bound)**2):
+                    distances=None
+            if distances is None:
+                distances=NearestNeighbors(n_neighbors=kb).fit(branch_ref).kneighbors(branch_query,return_distance=True)[0][:,kb-1]
             for i in ix[distances>radius]:flags[i].append('conditional_extrapolation')
     for f in model['design']['factors']:
         j=f['index']

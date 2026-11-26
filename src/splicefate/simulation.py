@@ -50,11 +50,12 @@ def propagate(models,X,frame,times,prior,targets,strength,c,*,bin_plan=None):
     has_composition=any(m['design'].get('compositions') for m in models.values() if m['status']=='ok')
     for r in range(c['simulation']['max_rounds']):
         new={};logit_change=0.;maximum=0.
-        if previous_state is not None:
+        changed_cols=set(np.flatnonzero(np.any(current!=previous_state,axis=0))) if previous_state is not None else set()
+        if changed_cols:
             for m in models.values():
                 if m['status']!='ok':continue
                 used=m.get('state_input_indices',m['input_indices'])
-                if not used or not np.any(current[:,used]!=previous_state[:,used]):continue
+                if changed_cols.isdisjoint(used):continue
                 if m.get('model_kind')==HYBRID:
                     p=predict_change(m,X,current,frame,times,with_flags=False)[0]
                     p_prev=predict_change(m,X,previous_state,frame,times,with_flags=False)[0]
@@ -157,13 +158,20 @@ def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=Non
 
     current,direct,history,stop=propagate(models,X,frame,times,prior,targets,strength,c,bin_plan=bin_plan)
     indices=resolve_targets(prior,targets);expression=apply_dose(X,indices,strength)
+    min_delta_threshold=c['simulation'].get('min_delta_threshold',1e-4)
+    write_unchanged_cells=c['simulation'].get('write_unchanged_cells',False)
+    targets_label=';'.join(sorted(targets))
     event_rows=[];chain_rows=[];audit_rows=[];summary_rows=[];handles=[]
     if output is not None:
         output=Path(output);output.mkdir(parents=True,exist_ok=True)
-        def writer(name,columns,zipped=False):
-            h=gzip.open(output/name,'wt',newline='') if zipped else (output/name).open('w',newline='')
-            handles.append(h);w=csv.DictWriter(h,fieldnames=columns,delimiter='\t',extrasaction='ignore');w.writeheader();return w
-        ew=writer('events.tsv.gz',EVENT_COLUMNS,True);cw=writer('chains.tsv.gz',CHAIN_COLUMNS,True);aw=writer('structure_diagnostics.tsv',AUDIT_COLUMNS)
+        def gzip_writer(name,columns):
+            h=gzip.open(output/name,'wt',compresslevel=1,newline='')
+            handles.append(h)
+            w=csv.writer(h,delimiter='\t');w.writerow(columns)
+            return w
+        ew=gzip_writer('events.tsv.gz',EVENT_COLUMNS);cw=gzip_writer('chains.tsv.gz',CHAIN_COLUMNS)
+        h=(output/'structure_diagnostics.tsv').open('w',newline='');handles.append(h)
+        aw=csv.DictWriter(h,fieldnames=AUDIT_COLUMNS,delimiter='\t',extrasaction='ignore');aw.writeheader()
     affected_genes=set();counts_written=0
     eligible_events=set(prior.get('eligible_events',[]))
     candidate_events=set(prior.get('events',{}))
@@ -189,26 +197,26 @@ def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=Non
                 delta=new-wt
                 components=(pe-wt,pdirect-pe,new-pdirect);changed=bool(np.any(delta!=0))
                 status=relation_status(m,indices,changed,relation_rows)
-                if changed:affected_genes.add(m['gene_id'])
-                # Only changed events need chain reconstruction constraints; unchanged
-                # constraints of an affected gene are added below, one gene at a time.
-                ci=(intervals or {}).get(e)
-                write=(c['simulation'].get('write_unchanged_cells',False) or output is None or status in ('modeled_direct','modeled_cascade_only') or changed)
+                material_change=bool(np.max(np.abs(delta),initial=0.)>=min_delta_threshold) if min_delta_threshold>0 else changed
+                if (status=='modeled_direct' and changed) or material_change:
+                    affected_genes.add(m['gene_id'])
+                write=write_unchanged_cells or output is None or status=='modeled_direct' or material_change
                 if write:
-                    for i,cell in enumerate(frame.cell):
+                    ci=(intervals or {}).get(e)
+                    event_fields=(m['event_id'],m['gene_id'],m['gene_name'])
+                    successful_fits=ci['successful_fits'] if ci else 0
+                    stages,clusters=frame.stage.array,frame.leiden.array
+                    for i,(cell,stage,cluster,time,n,cell_flags) in enumerate(zip(frame.cell,stages,clusters,times,N,flags)):
+                        observed=n>0
+                        prediction_status='conditional_prediction' if observed else 'unobserved_event_prediction_not_imputation'
+                        row_flags=';'.join(cell_flags)
                         for k in range(m['branch_count']):
-                            record={'event':m['event_id'],'gene_id':m['gene_id'],'gene_name':m['gene_name'],
-                                'cell':cell,'cell_stage':frame.stage.iloc[i],'cluster':frame.leiden.iloc[i],
-                                'pseudotime':float(times[i]),'branch_index':k,'probability_WT':wt[i,k],
-                                'probability_perturbed':new[i,k],'delta_probability':delta[i,k],
-                                'delta_expression_only':components[0][i,k],'delta_direct_composition':components[1][i,k],
-                                'delta_cascade':components[2][i,k],'observed_event_molecules':N[i],
-                                'cell_event_observed':N[i]>0,'status':'conditional_prediction' if N[i]>0 else 'unobserved_event_prediction_not_imputation',
-                                'target_relation_status':status,'flags':';'.join(flags[i]),'strength':strength,'targets':';'.join(sorted(targets)),
-                                'bootstrap_low':ci['low'][i,k] if ci else np.nan,'bootstrap_high':ci['high'][i,k] if ci else np.nan,
-                                'bootstrap_successful_fits':ci['successful_fits'] if ci else 0}
+                            record=(*event_fields,cell,stage,cluster,float(time),k,wt[i,k],new[i,k],delta[i,k],
+                                    components[0][i,k],components[1][i,k],components[2][i,k],n,observed,
+                                    prediction_status,status,row_flags,strength,targets_label,
+                                    ci['low'][i,k] if ci else np.nan,ci['high'][i,k] if ci else np.nan,successful_fits)
                             if output is not None:ew.writerow(record)
-                            else:event_rows.append(record)
+                            else:event_rows.append(dict(zip(EVENT_COLUMNS,record)))
                             counts_written+=1
             else:
                 wt=new=None;flags=None;components=()
@@ -237,12 +245,12 @@ def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=Non
                 if output is not None:aw.writerow(row)
                 else:audit_rows.append(row)
             for i in np.flatnonzero(result['valid']):
+                cell=frame.cell.iloc[i]
                 for k,chain in enumerate(result['chain_ids']):
-                    row={'gene_id':gene,'cell':frame.cell.iloc[i],'chain_id':chain,'usage_WT':result['reference'][i,k],
-                         'usage_perturbed':result['perturbed'][i,k],'delta_usage':result['perturbed'][i,k]-result['reference'][i,k],
-                         'structure_scope':result['scope'],'retained_chain_molecule_fraction':result['retained_fraction']}
+                    reference,perturbed=result['reference'][i,k],result['perturbed'][i,k]
+                    row=(gene,cell,chain,reference,perturbed,perturbed-reference,result['scope'],result['retained_fraction'])
                     if output is not None:cw.writerow(row)
-                    else:chain_rows.append(row)
+                    else:chain_rows.append(dict(zip(CHAIN_COLUMNS,row)))
     finally:
         for h in handles:h.close()
     if output is not None:pd.DataFrame(summary_rows).to_csv(output/'event_stage_summary.tsv',sep='\t',index=False)
