@@ -109,7 +109,7 @@ def mmap_npz(path, name):
 
 
 class ModelWriter:
-    """Append each joint fit immediately; pack arrays on successful completion."""
+    """Append each fitted event immediately; pack arrays on successful completion."""
     def __init__(self,root):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True)
         self.db=duckdb.connect(str(self.root/'models.duckdb'))
@@ -155,6 +155,7 @@ class ModelStore(Mapping):
         raw,wo,wr,wc,so,sr,sc=self.rows[str(e)];m=json.loads(raw)
         if wr:
             m['WT_prediction']=self.wt[wo:wo+wr*wc].reshape(wr,wc)
+        if 'support' in m:
             m['support']['reference_inputs']=self.support[so:so+sr*sc].reshape(sr,sc)
         if self.data is not None:
             i=int(e);m['observed_denominators']=np.asarray(self.data['C'][:,self.data['offsets'][i]:self.data['offsets'][i+1]].sum(1)).ravel()

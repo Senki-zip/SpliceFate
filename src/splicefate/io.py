@@ -70,6 +70,49 @@ def validate_config(c):
     if (isinstance(c['model']['max_factors'],bool) or not isinstance(c['model']['max_factors'],int)
             or c['model']['max_factors'] < 1 or c['model']['max_interactions'] < 0):
         raise ValueError('Invalid model budget')
+    from .binning import DEFAULTS as bin_defaults
+    from .model import GROUP_DEFAULTS
+    bins=c.setdefault('binning',{})
+    model=c['model']
+    gates=model.setdefault('group_gates',{})
+    if not isinstance(bins,dict) or not isinstance(gates,dict):
+        raise ValueError('binning and model.group_gates must be mappings')
+    for key,value in bin_defaults.items():
+        bins.setdefault(key,value)
+    for key,value in GROUP_DEFAULTS.items():
+        gates.setdefault(key,value)
+    model.setdefault('state_dependent',False)
+    if not isinstance(bins['enabled'],bool) or bins['mode']!='fixed_gaussian':
+        raise ValueError('binning requires a boolean enabled and mode fixed_gaussian')
+    if not isinstance(model['state_dependent'],bool):
+        raise ValueError('model.state_dependent must be boolean')
+    if model.setdefault('selection_mode','all_passing_singles_hybrid') not in ('all_passing_singles_hybrid','top_k'):
+        raise ValueError('Invalid model.selection_mode')
+    limit=model.setdefault('max_single_factors',None)
+    if limit is not None and (type(limit) is not int or limit<1):
+        raise ValueError('model.max_single_factors must be null or a positive integer')
+    model.setdefault('spline_knots',0)
+    model.setdefault('output_cap_lambda',.25)
+    for section,values,minimums in [
+        ('binning',bins,dict(n_bins=1,min_cells_per_bin=1,min_support_cells=1,min_oob_bins=1)),
+        ('model',model,dict(spline_knots=0)),
+        ('model.group_gates',gates,dict(min_group_rows=1)),
+    ]:
+        for key,minimum in minimums.items():
+            if type(values[key]) is not int or values[key]<minimum:
+                raise ValueError(f'{section}.{key} must be an integer >= {minimum}')
+    for section,values,bounds in [
+        ('binning',bins,{'overlap_factor':(0.,np.inf)}),
+        ('model',model,{'output_cap_lambda':(0.,np.inf)}),
+        ('model.group_gates',gates,{'min_group_cell_ess':(0.,np.inf),'min_group_effective_rows':(0.,np.inf),
+            'max_geometry_condition':(1.,np.inf),'min_group_oob_gain':(0.,np.inf),
+            'min_group_positive_gain_fraction':(0.,1.)}),
+    ]:
+        for key,(low,high) in bounds.items():
+            value=values[key]
+            if (type(value) not in (int,float) or not np.isfinite(value) or not low<=value<=high
+                    or (key=='overlap_factor' and value==0)):
+                raise ValueError(f'Invalid {section}.{key}')
     from .network import selection_settings,POLICY
     selection=selection_settings(c);c['model']['network_selection']=selection
     if selection['method']!=POLICY:
@@ -110,6 +153,8 @@ def validate_config(c):
     iso=settings(c)
     for key in ['max_events_per_factor','min_branch_molecules','min_branch_cells','min_joint_cells','ridge','count_shrinkage']:
         if iso[key]<=0:raise ValueError('Positive model.isoform_state setting required: '+key)
+    if type(iso['min_joint_bins']) is not int or iso['min_joint_bins']<1:
+        raise ValueError('model.isoform_state.min_joint_bins must be a positive integer')
     if iso['max_branches']<2:raise ValueError('Isoform groups require at least two branches')
     if c['simulation']['max_rounds']<1 or c['simulation']['max_chain_states']<2:raise ValueError('Invalid cascade/structure budget')
     if c['simulation']['structure_lambda']<=0 or c['simulation']['structure_prior_strength']<=0:raise ValueError('Positive structure penalties required')

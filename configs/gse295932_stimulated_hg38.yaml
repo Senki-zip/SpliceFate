@@ -77,9 +77,17 @@ priors:
   min_event_molecules: 20
   partner_hops: 1
   extra_targets: []
+binning:
+  enabled: true
+  mode: fixed_gaussian
+  n_bins: 50
+  min_cells_per_bin: 10
+  overlap_factor: 2.0
+  min_support_cells: 5
+  min_oob_bins: 4
 model:
   response: spline
-  spline_knots: 3
+  spline_knots: 0
   state_ridge: 1.0
   ridge: 10.0
   interaction_ridge: 30.0
@@ -98,7 +106,17 @@ model:
     min_positive_gain_fraction: 0.6
     min_stability: 0.3
   max_interactions: 2
-  state_dependent: true
+  state_dependent: false
+  output_cap_lambda: 0.25
+  selection_mode: all_passing_singles_hybrid
+  max_single_factors: null
+  group_gates:
+    min_group_rows: 12
+    min_group_cell_ess: 30.0
+    min_group_effective_rows: 12.0
+    max_geometry_condition: 10000.0
+    min_group_oob_gain: 0.005
+    min_group_positive_gain_fraction: 0.6
   isoform_state:
     enabled: true
     max_events_per_factor: 1

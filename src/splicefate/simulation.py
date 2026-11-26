@@ -8,9 +8,10 @@ import numpy as np
 import pandas as pd
 from scipy.special import log_softmax
 
-from .model import predict_change,logits
+from .model import HYBRID,predict_change,logits
 from .structure import iter_structure_predictions
 from .composition import apply_intervention,next_inputs,state_diagnostics
+from .binning import settings as binning_settings
 
 EVENT_COLUMNS=['event','gene_id','gene_name','cell','cell_stage','cluster','pseudotime','branch_index',
     'probability_WT','probability_perturbed','delta_probability','delta_expression_only','delta_direct_composition',
@@ -37,7 +38,9 @@ def resolve_targets(prior,targets):
     return result
 
 
-def propagate(models,X,frame,times,prior,targets,strength,c):
+def propagate(models,X,frame,times,prior,targets,strength,c,*,bin_plan=None):
+    if bin_plan is not None and binning_settings(c)['enabled']:
+        frame,times=bin_plan.bin_frame,bin_plan.centers
     indices=resolve_targets(prior,targets)
     direct=apply_intervention(X,indices,strength,prior);current=direct.copy()
     source_ids={str(s['source_event_index']) for s in prior.get('isoform_states',[])}
@@ -52,8 +55,14 @@ def propagate(models,X,frame,times,prior,targets,strength,c):
                 if m['status']!='ok':continue
                 used=m.get('state_input_indices',m['input_indices'])
                 if not used or not np.any(current[:,used]!=previous_state[:,used]):continue
-                lp=log_softmax(logits(m,current,frame,times),axis=1)
-                old_lp=log_softmax(logits(m,previous_state,frame,times),axis=1)
+                if m.get('model_kind')==HYBRID:
+                    p=predict_change(m,X,current,frame,times,with_flags=False)[0]
+                    p_prev=predict_change(m,X,previous_state,frame,times,with_flags=False)[0]
+                    lp=np.log(np.maximum(p,1e-300))
+                    old_lp=np.log(np.maximum(p_prev,1e-300))
+                else:
+                    lp=log_softmax(logits(m,current,frame,times),axis=1)
+                    old_lp=log_softmax(logits(m,previous_state,frame,times),axis=1)
                 logit_change=max(logit_change,float(np.max(np.abs(lp-old_lp))))
         for e,m in source_models.items():
             p,_,_=predict_change(m,X,current,frame,times,with_flags=False);new[e]=p
@@ -89,30 +98,34 @@ def relation_status(model,indices,changed,network_rows):
     return 'not_selected_by_quality' if network_rows else 'no_prior_path'
 
 
-def summarize_event(event,model,wt,new,components,N,frame,flags,status,network,targets,strength,stage_groups=None,*,unfitted_status=None):
+def summarize_event(event,model,wt,new,components,N,frame,flags,status,network,targets,strength,stage_groups=None,*,unfitted_status=None,covered=None):
     rows=[];k=len(event.get('branches',[])) or (model or {}).get('branch_count',0)
     fit_status=model['status'] if model is not None else unfitted_status
     for stage,ix in (stage_groups if stage_groups is not None else frame.groupby('stage',sort=True).indices).items():
-        ix=np.asarray(ix);n=N[ix];good=n>0;total=float(n.sum())
+        ix=np.asarray(ix)
+        ix_cov,ix_uncov=(ix,ix[:0]) if covered is None else (ix[covered[ix]],ix[~covered[ix]])
+        n=N[ix_cov];good=n>0;total=float(n.sum())
+        uncovered_cells=int(len(ix_uncov));uncovered_molecules=float(N[ix_uncov].sum())
         for branch in range(k):
             row={'event':event['event'],'gene_id':event['gene'],'cell_stage':stage,'branch_index':branch,
                  'targets':';'.join(sorted(targets)),'strength':strength,'target_relation_status':status,'event_fit_status':fit_status,
                  'network_best_rank':network.get('selection_rank'),'network_best_selection_score':network.get('selection_score'),
                  'network_best_oob_gain':network.get('oob_fit_gain'),'cells':len(ix),'observed_cells':int(good.sum()),
-                 'observed_molecules':total,'aggregation_scope':'WT_event_molecule_weighted; observed_cells; all_cells'}
+                 'observed_molecules':total,'uncovered_cells':uncovered_cells,'uncovered_molecules':uncovered_molecules,
+                 'aggregation_scope':'WT_event_molecule_weighted; observed_cells; all_cells'}
             if wt is not None:
-                d=new[ix,branch]-wt[ix,branch]
+                d=new[ix_cov,branch]-wt[ix_cov,branch]
                 mw=float(n@d/total) if total else np.nan
-                row.update(probability_WT=float(n@wt[ix,branch]/total) if total else np.nan,
-                    probability_perturbed=float(n@new[ix,branch]/total) if total else np.nan,
+                row.update(probability_WT=float(n@wt[ix_cov,branch]/total) if total else np.nan,
+                    probability_perturbed=float(n@new[ix_cov,branch]/total) if total else np.nan,
                     delta_probability=mw,delta_probability_molecule_weighted=mw,
                     delta_probability_observed_cells=float(d[good].mean()) if good.any() else np.nan,
-                    delta_probability_all_cells=float(d.mean()),
-                    within_support_cells=sum(not flags[i] for i in ix),
-                    outside_support_cells=sum(any('extrapolation' in f or 'outside_WT' in f or 'unsupported' in f or 'p05' in f for f in flags[i]) for i in ix),
-                    weak_identifiability_cells=sum('individual_effect_unresolved' in flags[i] for i in ix))
+                    delta_probability_all_cells=float(d.mean()) if len(d) else np.nan,
+                    within_support_cells=sum(not flags[i] for i in ix_cov),
+                    outside_support_cells=sum(any('extrapolation' in f or 'outside_WT' in f or 'unsupported' in f or 'p05' in f for f in flags[i]) for i in ix_cov),
+                    weak_identifiability_cells=sum('individual_effect_unresolved' in flags[i] for i in ix_cov))
                 for name,values in zip(['delta_expression_only_mw','delta_direct_composition_mw','delta_cascade_mw'],components):
-                    row[name]=float(n@values[ix,branch]/total) if total else np.nan
+                    row[name]=float(n@values[ix_cov,branch]/total) if total else np.nan
             else:
                 row.update({key:np.nan for key in ['probability_WT','probability_perturbed','delta_probability',
                     'delta_probability_molecule_weighted','delta_probability_observed_cells','delta_probability_all_cells',
@@ -122,9 +135,27 @@ def summarize_event(event,model,wt,new,components,N,frame,flags,status,network,t
     return rows
 
 
-def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=None,data=None,network=None,intervals=None):
+def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=None,data=None,network=None,intervals=None,
+             *,bin_plan=None):
     """Production streams per event/gene; the in-memory adapter supports small tests."""
-    current,direct,history,stop=propagate(models,X,frame,times,prior,targets,strength,c)
+    model_frame,model_times=frame,times
+    covered=None
+    if not binning_settings(c)['enabled']:
+        bin_plan=None
+    if bin_plan is not None:
+        model_frame,model_times=bin_plan.bin_frame,bin_plan.centers
+        covered=bin_plan.M_cell.any(axis=1)
+        dominant=bin_plan.M_cell.argmax(axis=1) if len(model_frame) else np.zeros(len(frame),int)
+
+    def cell_probability(p):
+        if bin_plan is None:
+            return p
+        result=bin_plan.M_cell@p
+        # Unsupported partitions carry a neutral, unchanged probability and flag.
+        result[~covered]=1./p.shape[1]
+        return result
+
+    current,direct,history,stop=propagate(models,X,frame,times,prior,targets,strength,c,bin_plan=bin_plan)
     indices=resolve_targets(prior,targets);expression=apply_dose(X,indices,strength)
     event_rows=[];chain_rows=[];audit_rows=[];summary_rows=[];handles=[]
     if output is not None:
@@ -148,9 +179,14 @@ def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=Non
             best=min(relation_rows,key=lambda r:(r.get('selection_rank') is None,r.get('selection_rank') or float('inf'),-float(r.get('selection_score') or 0)),default={})
             unfitted_status=None
             if m is not None and m['status']=='ok':
-                wt=np.asarray(m['WT_prediction']);new,delta,flags=predict_change(m,X,current,frame,times)
-                pe=predict_change(m,X,expression,frame,times,with_flags=False)[0]
-                pdirect=predict_change(m,X,direct,frame,times,with_flags=False)[0]
+                wt=cell_probability(np.asarray(m['WT_prediction']))
+                new,_,flags=predict_change(m,X,current,model_frame,model_times)
+                new=cell_probability(new)
+                pe=cell_probability(predict_change(m,X,expression,model_frame,model_times,with_flags=False)[0])
+                pdirect=cell_probability(predict_change(m,X,direct,model_frame,model_times,with_flags=False)[0])
+                if bin_plan is not None:
+                    flags=[flags[b] if supported else ['branch_unsupported'] for b,supported in zip(dominant,covered)]
+                delta=new-wt
                 components=(pe-wt,pdirect-pe,new-pdirect);changed=bool(np.any(delta!=0))
                 status=relation_status(m,indices,changed,relation_rows)
                 if changed:affected_genes.add(m['gene_id'])
@@ -184,7 +220,7 @@ def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=Non
                     else:unfitted_status='insufficient_event_counts'
                 status='no_prior_path' if unfitted_status=='no_prior_path' else 'event_unmodeled'
             summary_rows.extend(summarize_event(event,m,wt,new,components,N,frame,flags,status,best,targets,strength,stage_groups,
-                unfitted_status=unfitted_status))
+                unfitted_status=unfitted_status,covered=covered))
         # Each worker gets only one gene's arrays. Limit submitted results in the iterator.
         def gene_jobs():
             for gene in sorted(affected_genes):
@@ -192,8 +228,8 @@ def simulate(models,X,frame,times,prior,structures,targets,strength,c,output=Non
                 structure=structures[gene];wt={};new={}
                 for e in structure['event_branch_maps']:
                     if e not in models or models[e]['status']!='ok':continue
-                    m=models[e];wt[e]=np.asarray(m['WT_prediction'])
-                    new[e]=predict_change(m,X,current,frame,times,with_flags=False)[0]
+                    m=models[e];wt[e]=cell_probability(np.asarray(m['WT_prediction']))
+                    new[e]=cell_probability(predict_change(m,X,current,model_frame,model_times,with_flags=False)[0])
                 yield gene,structure,wt,new,c
         workers=c.get('_runtime_threads',c.get('runtime',{}).get('threads',1)) if output is not None else 1
         for gene,result,audit in iter_structure_predictions(gene_jobs(),workers):
