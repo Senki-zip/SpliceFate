@@ -40,7 +40,7 @@ class BinBootstrapDraw(NamedTuple):
 def selection_settings(c):
     configured = c['model'].get('network_selection', {})
     return {'method':POLICY, 'screening_mode':'all_wt_penalized',
-            'min_partial_r2':.02, 'min_penalized_fit_gain':0.,
+            'min_partial_r2':.05, 'min_penalized_fit_gain':0.,
             'min_response_score':0., 'min_oob_fit_gain':0.,
             'min_positive_gain_fraction':.6,'min_stability':.3,
             'bootstrap_repeats':10 if configured.get('screening_mode')=='cell_oob' else 0,

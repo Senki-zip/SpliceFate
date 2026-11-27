@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import numpy as np
 import pandas as pd
+from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.interpolate import BSpline
 from scipy.optimize import minimize
 from scipy.special import softmax,gammaln,digamma
-from scipy.spatial.distance import cdist,pdist
+from scipy.spatial.distance import cdist,pdist,squareform
 from sklearn.neighbors import NearestNeighbors
 from .composition import settings as composition_settings
 from .binning import CellSupport, settings as binning_settings
@@ -17,6 +18,14 @@ HYBRID_SELECTION = 'all_passing_singles_hybrid'
 GROUP_DEFAULTS = dict(min_group_rows=12, min_group_cell_ess=30., min_group_effective_rows=12.,
                       max_geometry_condition=10000., min_group_oob_gain=.005,
                       min_group_positive_gain_fraction=.6, min_group_penalized_gain=.05)
+CLUSTER_DEFAULTS = dict(
+    enabled=True,
+    correlation_threshold=0.6,
+    linkage='average',
+    residualize_state=True,
+    use_absolute_correlation=True,
+    within_cluster_aggregation='complex_envelope',
+)
 
 
 def hybrid_selection(c):
@@ -30,6 +39,9 @@ def observed_rows(counts, frame):
 def group_settings(c):
     return {**GROUP_DEFAULTS, **c['model'].get('group_gates', {})}
 
+
+def cluster_settings(c):
+    return {**CLUSTER_DEFAULTS, **c['model'].get('factor_clustering', {})}
 
 
 def _spline_basis(x,knots,degree=3):
@@ -371,6 +383,26 @@ def _group_term(group,X,frame,t):
     return np.column_stack([D[:,-1,None]*np.asarray(group['coefficient']),np.zeros(len(X))])
 
 
+def _bounded_single_change(single, Xold, Xnew, frame, t, cap, flags, observed):
+    indices=single['state_input_indices']
+    changed=np.any(Xold[:,indices]!=Xnew[:,indices],axis=1)
+    if not changed.any():
+        return None
+    before=logits(single,Xold,frame,t)
+    change=logits(single,Xnew,frame,t)[changed]-before[changed]
+    responsive=np.any(change!=0,axis=1)
+    moving=np.flatnonzero(changed)[responsive]
+    wt=softmax(before[moving],axis=1)
+    log_wt=np.log(np.maximum(wt,1e-300))
+    raw=softmax(log_wt+change[responsive],axis=1)
+    capped=_bounded_probability(raw,np.asarray(single['wt_prob_min']),np.asarray(single['wt_prob_max']),cap,wt_row=wt)
+    delta=np.log(np.maximum(capped,1e-300))-log_wt
+    if flags is not None:
+        for i,values in enumerate(prediction_flags(single,Xold,Xnew,frame,t,changed,observed)):
+            flags[i].update(values)
+    return moving,delta
+
+
 def _predict_hybrid(model,Xold,Xnew,frame,t,with_flags):
     old=np.asarray(model['WT_prediction'])
     indices=model['state_input_indices']
@@ -380,23 +412,48 @@ def _predict_hybrid(model,Xold,Xnew,frame,t,with_flags):
     effect=np.zeros_like(old)
     flags=[set() for _ in old] if with_flags else None
     observed=np.asarray(model['wt_observed_rows'],dtype=int)
-    for single in model['singles']:
-        indices=single['state_input_indices']
-        changed=np.any(Xold[:,indices]!=Xnew[:,indices],axis=1)
-        if not changed.any():
-            continue
-        before=logits(single,Xold,frame,t)
-        change=logits(single,Xnew,frame,t)[changed]-before[changed]
-        responsive=np.any(change!=0,axis=1)
-        moving=np.flatnonzero(changed)[responsive]
-        wt=softmax(before[moving],axis=1)
-        log_wt=np.log(np.maximum(wt,1e-300))
-        raw=softmax(log_wt+change[responsive],axis=1)
-        capped=_bounded_probability(raw,np.asarray(single['wt_prob_min']),np.asarray(single['wt_prob_max']),cap,wt_row=wt)
-        effect[moving]+=single['weight']*(np.log(np.maximum(capped,1e-300))-log_wt)
-        if flags is not None:
-            for i,values in enumerate(prediction_flags(single,Xold,Xnew,frame,t,changed,observed)):
-                flags[i].update(values)
+    singles=model['singles']
+    clusters=model.get('factor_clusters')
+    if not clusters:
+        for single in singles:
+            result=_bounded_single_change(single,Xold,Xnew,frame,t,cap,flags,observed)
+            if result is not None:
+                moving,delta=result
+                effect[moving]+=single['weight']*delta
+    else:
+        agg=(model.get('factor_clustering') or {}).get('within_cluster_aggregation','complex_envelope')
+        for cluster in clusters:
+            changed_members=[]
+            for member,weight in zip(cluster['member_indices'],cluster['within_weights']):
+                result=_bounded_single_change(singles[member],Xold,Xnew,frame,t,cap,flags,observed)
+                if result is not None:
+                    moving,delta=result
+                    changed_members.append((weight,moving,delta))
+            if not changed_members:
+                continue
+            module_weight=cluster['module_weight']
+            if agg=='complex_envelope' and len(changed_members)==1:
+                weight,moving,delta=changed_members[0]
+                if weight>0:
+                    centered=delta-delta.mean(axis=1,keepdims=True)
+                    active=np.linalg.norm(centered,axis=1)>0
+                    if active.any():
+                        effect[moving[active]]+=module_weight*delta[active]
+                continue
+            # Each member's delta is zero outside its responsive rows.
+            cluster_delta=np.zeros_like(effect)
+            if agg=='weighted_mean':
+                for weight,moving,delta in changed_members:
+                    cluster_delta[moving]+=weight*delta
+            else:
+                den=np.zeros((len(effect),1))
+                for weight,moving,delta in changed_members:
+                    centered=delta-delta.mean(axis=1,keepdims=True)
+                    row_weight=weight*np.linalg.norm(centered,axis=1,keepdims=True)
+                    cluster_delta[moving]+=row_weight*delta
+                    den[moving]+=row_weight
+                np.divide(cluster_delta,den,out=cluster_delta,where=den>0)
+            effect+=module_weight*cluster_delta
     for group in model['groups']:
         indices=group['input_indices']
         changed=np.any(Xold[:,indices]!=Xnew[:,indices],axis=1)
@@ -491,7 +548,7 @@ def _group_split(X_tr,C_tr,X_oo,C_oo,frame,times,train,oob,minimum):
             X_oo[oob],C_oo[oob],frame.iloc[oob],times[oob])
 
 
-def fit_supported_groups(X,C,frame,times,pairs,c,*,singles,bin_plan=None,C_cell_N=None,draws=(),seed=42):
+def fit_supported_groups(X,C,frame,times,pairs,c,*,singles,bin_plan=None,C_cell_N=None,draws=(),seed=42,clusters=None):
     from .network import count_log_likelihood, selection_settings, weighted_brier_mse
     if not pairs:
         return [],[]
@@ -536,7 +593,7 @@ def fit_supported_groups(X,C,frame,times,pairs,c,*,singles,bin_plan=None,C_cell_
             record['reason']='input_geometry'
             continue
         if baseline_wt is None:
-            baseline_wt=single_sum_probability(singles,X_wt,fr_wt,t_wt)
+            baseline_wt=single_sum_probability(singles,X_wt,fr_wt,t_wt,clusters)
             if all_wt:
                 baseline_mse=weighted_brier_mse(C_wt,baseline_wt)
                 baseline_ll=count_log_likelihood(C_wt,baseline_wt,kappa)
@@ -575,8 +632,8 @@ def fit_supported_groups(X,C,frame,times,pairs,c,*,singles,bin_plan=None,C_cell_
             if draw not in baselines:
                 refits=refit_singles(singles,C_tr,X_tr,fr_tr,t_tr,c)
                 baselines[draw]=None if refits is None else (
-                    single_sum_probability(refits,X_tr,fr_tr,t_tr),
-                    single_sum_probability(refits,X_oo,fr_oo,t_oo))
+                    single_sum_probability(refits,X_tr,fr_tr,t_tr,clusters),
+                    single_sum_probability(refits,X_oo,fr_oo,t_oo,clusters))
             if baselines[draw] is None:
                 continue
             p_tr,p_oo=baselines[draw]
@@ -599,14 +656,90 @@ def fit_supported_groups(X,C,frame,times,pairs,c,*,singles,bin_plan=None,C_cell_
     return groups,audit
 
 
-def single_sum_probability(singles,X,frame,times):
-    p=sum(single['weight']*softmax(logits(single,X,frame,times),axis=1) for single in singles)
+def cluster_singles(singles, X, frame, times, observed, c) -> tuple[list[dict], dict]:
+    cfg=cluster_settings(c)
+    n=len(singles)
+    meta=dict(cfg,cluster_count=n,single_count=n,residualized_applied=False)
+    if not cfg['enabled'] or not n:
+        return [],meta
+
+    cols=[int(single['input_indices'][0]) for single in singles]
+    scores=np.array([max(float(single.get('weight',0.0)),0.0) for single in singles])
+    if not scores.any():
+        scores.fill(1.0)
+
+    obs=np.asarray(observed,bool)
+    n_observed=int(obs.sum())
+    threshold=cfg['correlation_threshold']
+    if n==1 or n_observed<3:
+        members=[[i] for i in range(n)]
+    elif threshold<=0.0:
+        members=[list(range(n))]
+    else:
+        F=X[obs][:,cols]
+        if cfg['residualize_state']:
+            B,_=state_basis(frame,times,observed=obs)
+            if n_observed-B.shape[1]>=3:
+                basis=B[obs]
+                proj=np.linalg.lstsq(basis,F,rcond=1e-8)[0]
+                F=F-basis@proj
+                meta['residualized_applied']=True
+
+        corr=np.eye(n)
+        varying=np.flatnonzero(F.std(axis=0)>1e-10)
+        if len(varying)>1:
+            corr[np.ix_(varying,varying)]=np.nan_to_num(
+                np.corrcoef(F[:,varying],rowvar=False),nan=0.0,posinf=0.0,neginf=0.0)
+        corr=0.5*(corr+corr.T)
+        np.fill_diagonal(corr,1.0)
+        sim=np.abs(corr) if cfg['use_absolute_correlation'] else np.clip(corr,0.0,1.0)
+        dist=np.clip(1.0-sim,0.0,1.0)
+        dist[dist<=1e-12]=0.0
+        dist=0.5*(dist+dist.T)
+        np.fill_diagonal(dist,0.0)
+        tree=linkage(squareform(dist),method=cfg['linkage'])
+        labels=fcluster(tree,t=max(0.0,1.0-threshold),criterion='distance')
+        by_label={}
+        for i,label in enumerate(labels):
+            by_label.setdefault(label,[]).append(i)
+        members=list(by_label.values())
+
+    module_scores=np.array([scores[group].max() for group in members])
+    total=module_scores.sum()
+    module_weights=module_scores/total if total>0 else np.full(len(members),1.0/len(members))
+    clusters=[]
+    for cluster_id,(group,module_weight) in enumerate(zip(members,module_weights)):
+        within=scores[group]
+        total=within.sum()
+        within_weights=within/total if total>0 else np.full(len(group),1.0/len(group))
+        clusters.append(dict(cluster_id=cluster_id,member_indices=group,factor_indices=[cols[i] for i in group],
+                             module_weight=float(module_weight),within_weights=within_weights.tolist()))
+    meta['cluster_count']=len(clusters)
+    return clusters,meta
+
+
+def effective_single_weights(singles, clusters=None) -> list[float]:
+    if not clusters:
+        return [single['weight'] for single in singles]
+    weights=[0.0]*len(singles)
+    for cluster in clusters:
+        for member,within_weight in zip(cluster['member_indices'],cluster['within_weights']):
+            weights[member]=cluster['module_weight']*within_weight
+    return weights
+
+
+def single_sum_probability(singles,X,frame,times,clusters=None):
+    weights=effective_single_weights(singles,clusters)
+    p=sum(weight*softmax(logits(single,X,frame,times),axis=1) for single,weight in zip(singles,weights))
     return p/p.sum(1,keepdims=True)
 
 
-def assemble_hybrid(singles,groups,group_diagnostics,X,frame,times,observed,c):
-    wt=single_sum_probability(singles,X,frame,times)
+def assemble_hybrid(singles,groups,group_diagnostics,X,frame,times,observed,c,*,clusters=None,cluster_meta=None):
+    if clusters is None:
+        clusters,cluster_meta=cluster_singles(singles,X,frame,times,observed,c)
+    wt=single_sum_probability(singles,X,frame,times,clusters=clusters)
     return dict(status='ok',model_kind=HYBRID,singles=singles,groups=groups,group_diagnostics=group_diagnostics,
+                factor_clusters=clusters,factor_clustering=cluster_meta,
                 output_cap_lambda=c['model'].get('output_cap_lambda',.25),WT_prediction=wt,
                 wt_observed_rows=np.flatnonzero(observed).tolist(),
                 input_indices=[j for single in singles for j in single['input_indices']],
@@ -656,11 +789,14 @@ def fit_models(data,frame,times,prior,X,c,event_limit=None,network_path=None,mod
                 model={'status':'no_supported_factor_response'}
             elif hybrid:
                 singles=[dict(json.loads(row[-1]),weight=row[3]) for row in rows]
+                observed=observed_rows(C,frame)
+                clusters,cluster_meta=cluster_singles(singles,X,frame,times,observed,c)
                 draws=binned_event_draws(views,C_cell) if views is not None and ipairs else ()
                 groups,diagnostics=fit_supported_groups(X,C,frame,times,ipairs,c,
                     singles=singles,bin_plan=bin_plan,C_cell_N=C_cell_N,draws=draws,
-                    seed=bootstrap_seed+e)
-                model=assemble_hybrid(singles,groups,diagnostics,X,frame,times,observed_rows(C,frame),c)
+                    seed=bootstrap_seed+e,clusters=clusters)
+                model=assemble_hybrid(singles,groups,diagnostics,X,frame,times,observed,c,
+                    clusters=clusters,cluster_meta=cluster_meta)
             else:
                 composition=[f for f in prior.get('composition_features',[]) if f['factor_index'] in indices
                              and f['gene_id']!=event['gene']]

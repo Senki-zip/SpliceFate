@@ -97,7 +97,7 @@ model:
     method: all_single_relations_then_weighted_quality
     screening_mode: all_wt_penalized
     min_response_score: 0.0
-    min_partial_r2: 0.02
+    min_partial_r2: 0.05
     min_penalized_fit_gain: 0.0
     bootstrap_repeats: 0
     bootstrap_seed: 42
@@ -113,6 +113,13 @@ model:
   output_cap_lambda: 0.25
   selection_mode: all_passing_singles_hybrid
   max_single_factors: null
+  factor_clustering:
+    enabled: true
+    correlation_threshold: 0.6
+    linkage: average
+    residualize_state: true
+    use_absolute_correlation: true
+    within_cluster_aggregation: complex_envelope
   group_gates:
     min_group_penalized_gain: 0.05
     min_group_rows: 12

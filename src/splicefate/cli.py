@@ -250,20 +250,24 @@ def bootstrap_intervals(c,data,frame,times,prior,X,models,targets,q,repeats,bin_
                     Ct=C[view] if bin_plan is None else K_tr@C
                     observed=observed_rows(C,frame) if bin_plan is None else observed_rows(bin_plan.K_eff@C,frame)
                     if m.get('model_kind')==HYBRID:
+                        # A legacy model also keeps its original, unclustered WT baseline.
+                        clusters=m.get('factor_clusters') or []
+                        cluster_meta=m.get('factor_clustering')
                         singles=refit_singles(m['singles'],Ct,Xt,ft,tt,c)
                         if singles is None:continue
                         good=observed_rows(Ct,ft)
                         groups=[]
                         if m['groups']:
                             X_good,C_good,fr_good,t_good=Xt[good],Ct[good],ft.iloc[good],tt[good]
-                            baseline=single_sum_probability(singles,X_good,fr_good,t_good)
+                            baseline=single_sum_probability(singles,X_good,fr_good,t_good,clusters=clusters)
                             for group in m['groups']:
                                 g,_=_fit_group_counts(C_good,X_good,fr_good,t_good,group['input_indices'],c,baseline)
                                 if g is None:break
                                 groups.append(g)
                             if len(groups)!=len(m['groups']):continue
                         compact=[dict(compact_model(single,good),weight=single['weight']) for single in singles]
-                        bm=assemble_hybrid(compact,groups,[],X_eval,frame,times,observed,c)
+                        bm=assemble_hybrid(compact,groups,[],X_eval,frame,times,observed,c,
+                                           clusters=clusters,cluster_meta=cluster_meta)
                     else:
                         bm=fit_event(Ct,Xt,ft,tt,m['input_indices'],[tuple(p) for p in m['pairs']],c,m['design'].get('compositions',[]))
                         if bm['status']!='ok':continue

@@ -71,7 +71,7 @@ def validate_config(c):
             or c['model']['max_factors'] < 1 or c['model']['max_interactions'] < 0):
         raise ValueError('Invalid model budget')
     from .binning import DEFAULTS as bin_defaults
-    from .model import GROUP_DEFAULTS
+    from .model import CLUSTER_DEFAULTS, GROUP_DEFAULTS
     bins=c.setdefault('binning',{})
     model=c['model']
     gates=model.setdefault('group_gates',{})
@@ -81,6 +81,21 @@ def validate_config(c):
         bins.setdefault(key,value)
     for key,value in GROUP_DEFAULTS.items():
         gates.setdefault(key,value)
+    clustering=model.setdefault('factor_clustering',{})
+    if not isinstance(clustering,dict):
+        raise ValueError('model.factor_clustering must be a mapping')
+    for key,value in CLUSTER_DEFAULTS.items():
+        clustering.setdefault(key,value)
+    for key in ('enabled','residualize_state','use_absolute_correlation'):
+        if not isinstance(clustering[key],bool):
+            raise ValueError(f'model.factor_clustering.{key} must be boolean')
+    threshold=clustering['correlation_threshold']
+    if type(threshold) not in (int,float) or not 0.0<=threshold<=1.0 or not np.isfinite(threshold):
+        raise ValueError('model.factor_clustering.correlation_threshold must be finite and within [0,1]')
+    if clustering['linkage'] not in ('average','complete','single'):
+        raise ValueError('Invalid model.factor_clustering.linkage')
+    if clustering['within_cluster_aggregation'] not in ('complex_envelope','weighted_mean'):
+        raise ValueError('Invalid model.factor_clustering.within_cluster_aggregation')
     model.setdefault('state_dependent',False)
     if not isinstance(bins['enabled'],bool) or bins['mode']!='fixed_gaussian':
         raise ValueError('binning requires a boolean enabled and mode fixed_gaussian')
